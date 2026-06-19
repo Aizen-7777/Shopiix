@@ -88,7 +88,7 @@ _DEAD_INDICATORS = (
     'submit rejected', 'submit rejected:','handle error', 'http 404',
     'delivery_delivery_line_detail_changed', 'delivery_address2_required',
     'url rejected', 'malformed input', 'amount_too_small', 'amount too small',
-    'site dead', 'captcha_required', 'captcha required', 'site errors', 'failed',
+    'site dead', 'captcha_required', 'captcha required', 'site errors',
     'all products sold out', 'no_session_token', 'tokenize_fail',
 )
 
@@ -168,7 +168,7 @@ async def check_card(card, site, proxy):
             'url': site,
             'proxy': proxy
         }
-        timeout = aiohttp.ClientTimeout(total=120)
+        timeout = aiohttp.ClientTimeout(total=30)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(CHECKER_API_URL, params=params) as resp:
                 raw = await resp.json(content_type=None)
@@ -240,18 +240,18 @@ async def send_realtime_hit(user_id, result, hit_type, username):
     current_date = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
     message = f"""<b>⚡💳 ㅤ#𝑒𝑝𝑜𝑝𝑖𝑖𝑖  💳⚡</b>
-<b>━━━━━━━━━━━━━━━━━</b>
-<b>⚡💠 𝐇𝐢𝐭 𝐅𝐨𝐮𝐧𝐝!</b>
+<b>─────────────────</b>
+<b>⚡💠 𝐇𝐢𝐭 𝐅𝐨𝐞𝐧𝐝!</b>
 <blockquote>{emoji} Status: {status_text}</blockquote>
 <blockquote>💳 Card: <code>{result['card']}</code></blockquote>
 <blockquote>📝 Response: {result['message'][:150]}</blockquote>
 <blockquote>🌐 𝐆𝐚𝐭𝐞𝐦𝐚𝐲: 🔥 {result.get('gateway', 'Unknown')} | 💰 {result.get('price', '-')}</blockquote>
-<b>━━━━━━━━━━━━━━━━━</b>
+<b>─────────────────</b>
 <b>🎯💠 𝐁𝐈𝐍 𝐈𝐧𝐟𝐨</b>
-<pre>𝗕𝗜𝗡 𝗜𝗻𝗳𝗼: {brand} - {bin_type} - {level}
+<pre>𝗢𝗜𝗡 𝗜𝗻𝗳𝗼: {brand} - {bin_type} - {level}
 𝗕𝗮𝗻𝗸: {bank}
 𝗖𝗼𝘂𝗻𝘁𝗿𝘆: {country} {flag}</pre>
-<b>━━━━━━━━━━━━━━━━━</b>
+<b>─────────────────</b>
 
 🤖 <b>Bot By: <a href="tg://user?id=5895386985">ㅤＡｉｚｅｎ</a></b>"""
 
@@ -270,13 +270,13 @@ async def update_progress(user_id, message_id, results, current_attempt_count):
     gateway = results['charged'][0]['gateway'] if results['charged'] else (results['approved'][0]['gateway'] if results['approved'] else 'Unknown')
 
     progress_text = f"""<b>⚡💳 ㅤ#𝑒𝑝𝑜𝑝𝑖𝑖𝑖  💳⚡</b>
-<b>━━━━━━━━━━━━━━━━━</b>
+<b>─────────────────</b>
 <b>⚡💠 𝐏𝐫𝐨𝐠𝐫𝐞𝐬𝐬</b>
 <blockquote>💳 Total: {results['total']} | ✅ Charged: {len(results['charged'])} | 🔥 Live: {len(results['approved'])} | ❌ Dead: {len(results['dead'])}</blockquote>
 <blockquote>📊 Checked: {current_attempt_count}/{results['total']}</blockquote>
 <blockquote>🌐 𝐆𝐚𝐭𝐞𝐦𝐚𝐲: 🔥 {gateway}</blockquote>
 <blockquote>⏱️ Time: {hours}h {minutes}m {seconds}s</blockquote>
-<b>━━━━━━━━━━━━━━━━━</b>"""
+<b>─────────────────</b>"""
 
     buttons = [
         [Button.inline("⏸️ Pause", b"pause"), Button.inline("▶️ Resume", b"resume")],
@@ -310,15 +310,15 @@ async def send_final_results(user_id, results):
     current_date = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
     summary = f"""<b>⚡💳 ㅤ#𝑒𝑝𝑜𝑝𝑖𝑖𝑖  💳⚡</b>
-<b>━━━━━━━━━━━━━━━━━</b>
-<b>⚡💠 𝐑𝐞𝐬𝐮𝐥𝐭𝐬</b>
+<b>─────────────────</b>
+<b>⚡💠 𝐑𝐞𝐬𝐞𝐬𝐯𝐞𝐬𝐭𝐬</b>
 <blockquote>💳 Total: {results['total']} | ✅ Charged: {len(results['charged'])} | 🔥 Live: {len(results['approved'])} | ❌ Dead: {len(results['dead'])}</blockquote>
 <blockquote>🌐 𝐆𝐚𝐭𝐞𝐦𝐚𝐲: 🔥 {gateway}</blockquote>
 <blockquote>⏱️ Time: {hours}h {minutes}m {seconds}s</blockquote>
-<b>━━━━━━━━━━━━━━━━━</b>
+<b>─────────────────</b>
 <b>🎯💠 𝐇𝐢𝐭𝐬</b>
 <blockquote>{hits_text}</blockquote>
-<b>━━━━━━━━━━━━━━━━━</b>
+<b>─────────────────</b>
 
 🤖 <b>Bot By: <a href="tg://user?id=5895386985">ㅤＡｉｚｅｎ</a></b>"""
 
@@ -389,7 +389,7 @@ async def start(event):
     await event.reply(
         premium_emoji(
             "<b>⚡💳 Welcome to Shopiiiii ! 💳⚡</b>\n"
-            "<b>━━━━━━━━━━━━━━━━━</b>\n"
+            "<b>─────────────────</b>\n"
             "<b>⚡💠 𝐂𝐂 𝐂𝐨𝐦𝐦𝐚𝐧𝐝𝐬</b>\n"
             "<blockquote>• /cc card|mm|yy|cvv - Check single CC\n"
             "• /chk - Reply to .txt file to check cards</blockquote>\n"
@@ -404,7 +404,7 @@ async def start(event):
             "• /rmproxyindex 1,2,3 - Remove by index\n"
             "• /clearproxy - Remove all proxies\n"
             "• /getproxy - Get all proxies</blockquote>\n"
-            "<b>━━━━━━━━━━━━━━━━━</b>\n"
+            "<b>─────────────────</b>\n"
             "<b>⚠️ Only premium users can use this bot.</b>"
         ),
         parse_mode='html'
@@ -448,10 +448,10 @@ async def single_cc_check(event):
     status_msg = await event.reply(
         premium_emoji(
             f"<b>⚡💳 ㅤ#𝑒𝑝𝑜𝑝𝑖𝑖𝑖  💳⚡</b>\n"
-            f"<b>━━━━━━━━━━━━━━━━━</b>\n"
+            f"<b>─────────────────</b>\n"
             f"<b>⚡💠 𝐂𝐡𝐞𝐜𝐤𝐢𝐧𝐠...</b>\n"
             f"<blockquote>💳 Card: <code>{card}</code></blockquote>\n"
-            f"<b>━━━━━━━━━━━━━━━━━</b>"
+            f"<b>─────────────────</b>"
         ),
         parse_mode='html'
     )
@@ -471,18 +471,18 @@ async def single_cc_check(event):
             status_text = "𝐃𝐞𝐚𝐝"
 
         final_resp = f"""<b>⚡💳 ㅤ#𝑒𝑝𝑜𝑝𝑖𝑖𝑖  💳⚡</b>
-<b>━━━━━━━━━━━━━━━━━</b>
-<b>⚡💠 𝐑𝐞𝐬𝐮𝐥𝐭𝐬</b>
+<b>─────────────────</b>
+<b>⚡💠 𝐑𝐞𝐬𝐞𝐬𝐯𝐞𝐬𝐭𝐬</b>
 <blockquote>{status_emoji} Status: {status_text}</blockquote>
 <blockquote>💳 Card: <code>{result['card']}</code></blockquote>
 <blockquote>📝 Response: {result['message'][:150]}</blockquote>
 <blockquote>🌐 𝐆𝐚𝐭𝐞𝐦𝐚𝐲: 🔥 {result.get('gateway', 'Unknown')} | 💰 {result.get('price', '-')}</blockquote>
-<b>━━━━━━━━━━━━━━━━━</b>
+<b>─────────────────</b>
 <b>🎯💠 𝐁𝐈𝐍 𝐈𝐧𝐟𝐨</b>
-<pre>𝗕𝗜𝗡 𝗜𝗻𝗳𝗼: {brand} - {bin_type} - {level}
+<pre>𝗢𝗜𝗡 𝗜𝗻𝗳𝗼: {brand} - {bin_type} - {level}
 𝗕𝗮𝗻𝗸: {bank}
 𝗖𝗼𝘂𝗻𝘁𝗿𝘆: {country} {flag}</pre>
-<b>━━━━━━━━━━━━━━━━━</b>
+<b>─────────────────</b>
 
 🤖 <b>Bot By: <a href="tg://user?id=5895386985">ㅤＡｉｚｅｎ</a></b>"""
 
