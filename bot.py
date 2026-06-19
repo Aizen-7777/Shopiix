@@ -242,27 +242,34 @@ async def check_card_with_retry(card, sites, proxies, max_retries=2):
 
 async def send_realtime_hit(user_id, result, hit_type, username):
     """Send real-time notification with new design"""
-    emoji = "✅" if hit_type == "Charged" else "🔥"
-    status_text = "𝐂𝐡𝐚𝐫𝐠𝐞𝐝" if hit_type == "Charged" else "𝐋𝐢𝐯𝐞"
+    if hit_type == "Charged":
+        emoji = "✅"
+        status_text = "𝗖𝗛𝗔𝗥𝗚𝗘𝗗"
+        badge = "💚 𝗖𝗛𝗔𝗥𝗚𝗘𝗗"
+    else:
+        emoji = "🔥"
+        status_text = "𝗔𝗣𝗣𝗥𝗢𝗩𝗘𝗗"
+        badge = "🧡 𝗔𝗣𝗣𝗥𝗢𝗩𝗘𝗗"
 
     brand, bin_type, level, bank, country, flag = await get_bin_info(result['card'].split('|')[0])
     current_date = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-    message = f"""<b>⚡💳 ㅤ#𝒮𝒽𝑜𝓅𝒾𝒾𝒾  💳⚡</b>
-<b>━━━━━━━━━━━━━━━━━</b>
-<b>⚡💠 𝐇𝐢𝐭 𝐅𝐨𝐮𝐧𝐝!</b>
-<blockquote>{emoji} Status: {status_text}</blockquote>
-<blockquote>💳 Card: <code>{result['card']}</code></blockquote>
-<blockquote>📝 Response: {result['message'][:150]}</blockquote>
-<blockquote>🌐 𝐆𝐚𝐭𝐞𝐰𝐚𝐲: 🔥 {result.get('gateway', 'Unknown')} | 💰 {result.get('price', '-')}</blockquote>
-<b>━━━━━━━━━━━━━━━━━</b>
-<b>🎯💠 𝐁𝐈𝐍 𝐈𝐧𝐟𝐨</b>
-<pre>𝗕𝗜𝗡 𝗜𝗻𝗳𝗼: {brand} - {bin_type} - {level}
-𝗕𝗮𝗻𝗸: {bank}
-𝗖𝗼𝘂𝗻𝘁𝗿𝘆: {country} {flag}</pre>
-<b>━━━━━━━━━━━━━━━━━</b>
-
-🤖 <b>Bot By: <a href="tg://user?id=5895386985">ㅤㅤＫａｍａｌ</a></b>"""
+    message = (
+        f"<b>╔══〔 {emoji} 𝗛𝗜𝗧 𝗗𝗘𝗧𝗘𝗖𝗧𝗘𝗗 〕══╗</b>\n"
+        f"<b>║  ⚡ 𝑺𝒉𝒐𝒑𝒊𝒊𝒊 𝑪𝒉𝒆𝒄𝒌𝒆𝒓  ⚡  ║</b>\n"
+        f"<b>╚═══════════════════════╝</b>\n\n"
+        f"<b>▸ 𝗦𝘁𝗮𝘁𝘂𝘀</b>  »  {badge}\n"
+        f"<b>▸ 𝗖𝗮𝗿𝗱</b>    »  <code>{result['card']}</code>\n"
+        f"<b>▸ 𝗥𝗲𝘀𝗽</b>    »  <i>{result['message'][:120]}</i>\n"
+        f"<b>▸ 𝗚𝗮𝘁𝗲</b>    »  🔥 {result.get('gateway', 'Unknown')}  |  💰 {result.get('price', '-')}\n\n"
+        f"<b>┌──〔 💠 𝗕𝗜𝗡 𝗜𝗡𝗙𝗢 〕──┐</b>\n"
+        f"<b>│ ▸ 𝗡𝗲𝘁𝘄𝗼𝗿𝗸</b>  »  {brand} · {bin_type} · {level}\n"
+        f"<b>│ ▸ 𝗕𝗮𝗻𝗸</b>     »  {bank}\n"
+        f"<b>│ ▸ 𝗖𝗼𝘂𝗻𝘁𝗿𝘆</b>  »  {country} {flag}\n"
+        f"<b>└──────────────────┘</b>\n\n"
+        f"🕐 <code>{current_date}</code>\n"
+        f"🤖 <b>𝗕𝗼𝘁 𝗕𝘆:</b> <a href=\"tg://user?id=5895386985\">ㅤＫａｍａｌ</a>"
+    )
 
     try:
         await bot.send_message(user_id, premium_emoji(message), parse_mode='html')
@@ -280,14 +287,22 @@ async def update_progress(user_id, message_id, results, current_attempt_count):
 
     gateway = results['charged'][0]['gateway'] if results['charged'] else (results['approved'][0]['gateway'] if results['approved'] else 'Unknown')
 
-    progress_text = f"""<b>⚡💳 ㅤ#𝒮𝒽𝑜𝓅𝒾𝒾𝒾  💳⚡</b>
-<b>━━━━━━━━━━━━━━━━━</b>
-<b>⚡💠 𝐏𝐫𝐨𝐠𝐫𝐞𝐬𝐬</b>
-<blockquote>💳 Total: {results['total']} | ✅ Charged: {len(results['charged'])} | 🔥 Live: {len(results['approved'])} | ❌ Dead: {len(results['dead'])}</blockquote>
-<blockquote>📊 Checked: {current_attempt_count}/{results['total']}</blockquote>
-<blockquote>🌐 𝐆𝐚𝐭𝐞𝐰𝐚𝐲: 🔥 {gateway}</blockquote>
-<blockquote>⏱️ Time: {hours}h {minutes}m {seconds}s</blockquote>
-<b>━━━━━━━━━━━━━━━━━</b>"""
+    pct = int((current_attempt_count / results['total']) * 20) if results['total'] else 0
+    bar = "▓" * pct + "░" * (20 - pct)
+
+    progress_text = (
+        f"<b>╔══〔 ⚡ 𝑺𝒉𝒐𝒑𝒊𝒊𝒊 𝑪𝒉𝒆𝒄𝒌𝒆𝒓 〕══╗</b>\n"
+        f"<b>║       🔄  𝗟𝗜𝗩𝗘  𝗣𝗥𝗢𝗚𝗥𝗘𝗦𝗦       ║</b>\n"
+        f"<b>╚════════════════════════╝</b>\n\n"
+        f"<code>[{bar}]</code>\n"
+        f"<b>📊 {current_attempt_count} / {results['total']} cards checked</b>\n\n"
+        f"<b>▸ ✅ 𝗖𝗵𝗮𝗿𝗴𝗲𝗱</b>  »  <code>{len(results['charged'])}</code>\n"
+        f"<b>▸ 🔥 𝗔𝗽𝗽𝗿𝗼𝘃𝗲𝗱</b>  »  <code>{len(results['approved'])}</code>\n"
+        f"<b>▸ ❌ 𝗗𝗲𝗮𝗱</b>      »  <code>{len(results['dead'])}</code>\n\n"
+        f"<b>▸ 🌐 𝗚𝗮𝘁𝗲𝘄𝗮𝘆</b>   »  🔥 {gateway}\n"
+        f"<b>▸ ⏱️ 𝗘𝗹𝗮𝗽𝘀𝗲𝗱</b>   »  {hours}h {minutes}m {seconds}s\n\n"
+        f"<b>────────────────────────</b>"
+    )
 
     buttons = [
         [Button.inline("⏸️ Pause", b"pause"), Button.inline("▶️ Resume", b"resume")],
@@ -310,30 +325,35 @@ async def send_final_results(user_id, results):
     hits_text = ""
     if results['charged']:
         for r in results['charged'][:5]:
-            hits_text += f"✅ <code>{r['card']}</code>\n"
+            hits_text += f"<b>│</b> ✅ <code>{r['card']}</code>\n"
     if results['approved']:
         for r in results['approved'][:5]:
-            hits_text += f"🔥 <code>{r['card']}</code>\n"
+            hits_text += f"<b>│</b> 🔥 <code>{r['card']}</code>\n"
 
     if not hits_text:
-        hits_text = "No hits found"
+        hits_text = "<b>│</b> ❌ No hits found\n"
 
     gateway = results['charged'][0]['gateway'] if results['charged'] else (results['approved'][0]['gateway'] if results['approved'] else 'Unknown')
 
     current_date = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-    summary = f"""<b>⚡💳 ㅤ#𝒮𝒽𝑜𝓅𝒾𝒾𝒾  💳⚡</b>
-<b>━━━━━━━━━━━━━━━━━</b>
-<b>⚡💠 𝐑𝐞𝐬𝐮𝐥𝐭𝐬</b>
-<blockquote>💳 Total: {results['total']} | ✅ Charged: {len(results['charged'])} | 🔥 Live: {len(results['approved'])} | ❌ Dead: {len(results['dead'])}</blockquote>
-<blockquote>🌐 𝐆𝐚𝐭𝐞𝐰𝐚𝐲: 🔥 {gateway}</blockquote>
-<blockquote>⏱️ Time: {hours}h {minutes}m {seconds}s</blockquote>
-<b>━━━━━━━━━━━━━━━━━</b>
-<b>🎯💠 𝐇𝐢𝐭𝐬</b>
-<blockquote>{hits_text}</blockquote>
-<b>━━━━━━━━━━━━━━━━━</b>
-
-🤖 <b>Bot By: <a href="tg://user?id=5895386985">ㅤㅤＫａｍａｌ</a></b>"""
+    summary = (
+        f"<b>╔══〔 🏆 𝑺𝒉𝒐𝒑𝒊𝒊𝒊 — 𝗙𝗜𝗡𝗔𝗟 𝗥𝗘𝗣𝗢𝗥𝗧 〕══╗</b>\n"
+        f"<b>╚═════════════════════════════╝</b>\n\n"
+        f"<b>┌──〔 📊 𝗦𝗨𝗠𝗠𝗔𝗥𝗬 〕──┐</b>\n"
+        f"<b>│ ▸ 📦 𝗧𝗼𝘁𝗮𝗹</b>     »  <code>{results['total']}</code>\n"
+        f"<b>│ ▸ ✅ 𝗖𝗵𝗮𝗿𝗴𝗲𝗱</b>  »  <code>{len(results['charged'])}</code>\n"
+        f"<b>│ ▸ 🔥 𝗟𝗶𝘃𝗲</b>     »  <code>{len(results['approved'])}</code>\n"
+        f"<b>│ ▸ ❌ 𝗗𝗲𝗮𝗱</b>      »  <code>{len(results['dead'])}</code>\n"
+        f"<b>│ ▸ 🌐 𝗚𝗮𝘁𝗲</b>     »  🔥 {gateway}\n"
+        f"<b>│ ▸ ⏱️ 𝗧𝗶𝗺𝗲</b>     »  {hours}h {minutes}m {seconds}s\n"
+        f"<b>└──────────────────┘</b>\n\n"
+        f"<b>┌──〔 💎 𝗛𝗜𝗧𝗦 〕──┐</b>\n"
+        f"{hits_text}"
+        f"<b>└──────────────────┘</b>\n\n"
+        f"🕐 <code>{current_date}</code>\n"
+        f"🤖 <b>𝗕𝗼𝘁 𝗕𝘆:</b> <a href=\"tg://user?id=5895386985\">ㅤＫａｍａｌ</a>"
+    )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"shopiii_{user_id}_{timestamp}.txt"
@@ -405,24 +425,29 @@ async def test_proxy(proxy):
 async def start(event):
     await event.reply(
         premium_emoji(
-            "<b>⚡💳 Welcome to Shopiiiii ! 💳⚡</b>\n"
-            "<b>━━━━━━━━━━━━━━━━━</b>\n"
-            "<b>⚡💠 𝐂𝐂 𝐂𝐨𝐦𝐦𝐚𝐧𝐝𝐬</b>\n"
-            "<blockquote>• /cc card|mm|yy|cvv - Check single CC\n"
-            "• /chk - Reply to .txt file to check cards</blockquote>\n"
-            "<b>⚡💠 𝐒𝐢𝐭𝐞 𝐂𝐨𝐦𝐦𝐚𝐧𝐝𝐬</b>\n"
-            "<blockquote>• /site - Check all sites & remove dead\n"
-            "• /rm url - Remove a specific site</blockquote>\n"
-            "<b>⚡💠 𝐏𝐫𝐨𝐱𝐲 𝐂𝐨𝐦𝐦𝐚𝐧𝐝𝐬</b>\n"
-            "<blockquote>• /proxy - Check all proxies & remove dead\n"
-            "• /addproxy - Add proxies (one per line)\n"
-            "• /chkproxy proxy - Check single proxy\n"
-            "• /rmproxy proxy - Remove single proxy\n"
-            "• /rmproxyindex 1,2,3 - Remove by index\n"
-            "• /clearproxy - Remove all proxies\n"
-            "• /getproxy - Get all proxies</blockquote>\n"
-            "<b>━━━━━━━━━━━━━━━━━</b>\n"
-            "<b>⚠️ Only premium users can use this bot.</b>"
+            "<b>╔══〔 ⚡ 𝑺𝒉𝒐𝒑𝒊𝒊𝒊 𝑪𝒉𝒆𝒄𝒌𝒆𝒓 〕══╗</b>\n"
+            "<b>║   💳  𝗪𝗘𝗟𝗖𝗢𝗠𝗘  𝗕𝗢𝗔𝗥𝗗   💳  ║</b>\n"
+            "<b>╚════════════════════════╝</b>\n\n"
+            "<b>┌──〔 💳 𝗖𝗔𝗥𝗗 𝗖𝗢𝗠𝗠𝗔𝗡𝗗𝗦 〕──┐</b>\n"
+            "<b>│</b> ▸ <code>/cc card|mm|yy|cvv</code>\n"
+            "<b>│</b>   Check a single card\n"
+            "<b>│</b> ▸ <code>/chk</code>  Reply to a .txt file\n"
+            "<b>└──────────────────┘</b>\n\n"
+            "<b>┌──〔 🌐 𝗦𝗜𝗧𝗘 𝗖𝗢𝗠𝗠𝗔𝗡𝗗𝗦 〕──┐</b>\n"
+            "<b>│</b> ▸ <code>/site</code>   Scan & clean sites\n"
+            "<b>│</b> ▸ <code>/rm url</code>  Remove a site\n"
+            "<b>└──────────────────┘</b>\n\n"
+            "<b>┌──〔 🔌 𝗣𝗥𝗢𝗫𝗬 𝗖𝗢𝗠𝗠𝗔𝗡𝗗𝗦 〕──┐</b>\n"
+            "<b>│</b> ▸ <code>/proxy</code>             Scan proxies\n"
+            "<b>│</b> ▸ <code>/addproxy</code>          Add proxies\n"
+            "<b>│</b> ▸ <code>/chkproxy</code> [proxy]  Test one\n"
+            "<b>│</b> ▸ <code>/rmproxy</code>  [proxy]  Remove one\n"
+            "<b>│</b> ▸ <code>/rmproxyindex</code> 1,2  Remove by #\n"
+            "<b>│</b> ▸ <code>/clearproxy</code>        Clear all\n"
+            "<b>│</b> ▸ <code>/getproxy</code>          List all\n"
+            "<b>└──────────────────┘</b>\n\n"
+            "⚠️ <b>Premium users only.</b>\n"
+            "🤖 <b>𝗕𝗼𝘁 𝗕𝘆:</b> <a href=\"tg://user?id=5895386985\">ㅤＫａｍａｌ</a>"
         ),
         parse_mode='html'
     )
@@ -466,11 +491,11 @@ async def single_cc_check(event):
 
     status_msg = await event.reply(
         premium_emoji(
-            f"<b>⚡💳 ㅤ#𝒮𝒽𝑜𝓅𝒾𝒾𝒾  💳⚡</b>\n"
-            f"<b>━━━━━━━━━━━━━━━━━</b>\n"
-            f"<b>⚡💠 𝐂𝐡𝐞𝐜𝐤𝐢𝐧𝐠...</b>\n"
-            f"<blockquote>💳 Card: <code>{card}</code></blockquote>\n"
-            f"<b>━━━━━━━━━━━━━━━━━</b>"
+            f"<b>╔══〔 ⚡ 𝑺𝒉𝒐𝒑𝒊𝒊𝒊 𝑪𝒉𝒆𝒄𝒌𝒆𝒓 〕══╗</b>\n"
+            f"<b>╚════════════════════════╝</b>\n\n"
+            f"<b>🔄 𝗖𝗵𝗲𝗰𝗸𝗶𝗻𝗴 𝗖𝗮𝗿𝗱...</b>\n\n"
+            f"<b>▸ 💳 𝗖𝗮𝗿𝗱</b>  »  <code>{card}</code>\n\n"
+            f"<i>Please wait...</i>"
         ),
         parse_mode='html'
     )
@@ -490,21 +515,22 @@ async def single_cc_check(event):
             status_emoji = "❌"
             status_text = "𝐃𝐞𝐚𝐝"
 
-        final_resp = f"""<b>⚡💳 ㅤ#𝒮𝒽𝑜𝓅𝒾𝒾𝒾  💳⚡</b>
-<b>━━━━━━━━━━━━━━━━━</b>
-<b>⚡💠 𝐑𝐞𝐬𝐮𝐥𝐭𝐬</b>
-<blockquote>{status_emoji} Status: {status_text}</blockquote>
-<blockquote>💳 Card: <code>{result['card']}</code></blockquote>
-<blockquote>📝 Response: {result['message'][:150]}</blockquote>
-<blockquote>🌐 𝐆𝐚𝐭𝐞𝐰𝐚𝐲: 🔥 {result.get('gateway', 'Unknown')} | 💰 {result.get('price', '-')}</blockquote>
-<b>━━━━━━━━━━━━━━━━━</b>
-<b>🎯💠 𝐁𝐈𝐍 𝐈𝐧𝐟𝐨</b>
-<pre>𝗕𝗜𝗡 𝗜𝗻𝗳𝗼: {brand} - {bin_type} - {level}
-𝗕𝗮𝗻𝗸: {bank}
-𝗖𝗼𝘂𝗻𝘁𝗿𝘆: {country} {flag}</pre>
-<b>━━━━━━━━━━━━━━━━━</b>
-
-🤖 <b>Bot By: <a href="tg://user?id=5895386985">ㅤㅤＫａｍａｌ</a></b>"""
+        current_date = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        final_resp = (
+            f"<b>╔══〔 {status_emoji} 𝑺𝒉𝒐𝒑𝒊𝒊𝒊 — 𝗥𝗘𝗦𝗨𝗟𝗧 〕══╗</b>\n"
+            f"<b>╚═════════════════════════╝</b>\n\n"
+            f"<b>▸ 𝗦𝘁𝗮𝘁𝘂𝘀</b>  »  {status_emoji} <b>{status_text}</b>\n"
+            f"<b>▸ 💳 𝗖𝗮𝗿𝗱</b>   »  <code>{result['card']}</code>\n"
+            f"<b>▸ 📝 𝗥𝗲𝘀𝗽</b>   »  <i>{result['message'][:120]}</i>\n"
+            f"<b>▸ 🌐 𝗚𝗮𝘁𝗲</b>   »  🔥 {result.get('gateway', 'Unknown')}  |  💰 {result.get('price', '-')}\n\n"
+            f"<b>┌──〔 💠 𝗕𝗜𝗡 𝗜𝗡𝗙𝗢 〕──┐</b>\n"
+            f"<b>│ ▸ 𝗡𝗲𝘁𝘄𝗼𝗿𝗸</b>  »  {brand} · {bin_type} · {level}\n"
+            f"<b>│ ▸ 𝗕𝗮𝗻𝗸</b>     »  {bank}\n"
+            f"<b>│ ▸ 𝗖𝗼𝘂𝗻𝘁𝗿𝘆</b>  »  {country} {flag}\n"
+            f"<b>└──────────────────┘</b>\n\n"
+            f"🕐 <code>{current_date}</code>\n"
+            f"🤖 <b>𝗕𝗼𝘁 𝗕𝘆:</b> <a href=\"tg://user?id=5895386985\">ㅤＫａｍａｌ</a>"
+        )
 
         await status_msg.edit(premium_emoji(final_resp), parse_mode='html')
 
