@@ -56,10 +56,10 @@ def premium_emoji(text):
         result = result.replace(placeholder, f'<tg-emoji emoji-id="{doc_id}">{emoji}</tg-emoji>')
     return result
 
-# Bot Configuration
-API_ID = 21124241
-API_HASH = 'b7ddce3d3683f54be788fddae73fa468'
-BOT_TOKEN = '8914967757:AAG_SqyEghOD8Zr_2Tzskw8qbD6VWgFoGCI'
+# Bot Configuration — loaded from environment variables (set these in Railway)
+API_ID = int(os.environ['API_ID'])
+API_HASH = os.environ['API_HASH']
+BOT_TOKEN = os.environ['BOT_TOKEN']
 
 
 # File paths

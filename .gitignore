@@ -1,0 +1,12 @@
+# Telethon session
+*.session
+*.session-journal
+
+# Generated result files
+shopiii_*.txt
+proxies_*.txt
+proxy_backup_*.txt
+
+# Python cache
+__pycache__/
+*.pyc
