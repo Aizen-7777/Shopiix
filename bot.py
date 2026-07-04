@@ -386,6 +386,20 @@ async def test_proxy(proxy):
 
 @bot.on(events.NewMessage(pattern='/start'))
 async def start(event):
+    buttons = [
+        [
+            Button.url("💳 CC Commands", "https://t.me/your_bot?start=cc"),
+            Button.url("📍 Sites", "https://t.me/your_bot?start=sites"),
+        ],
+        [
+            Button.url("🌐 Proxies", "https://t.me/your_bot?start=proxies"),
+            Button.url("📊 Check File", "https://t.me/your_bot?start=chk"),
+        ],
+        [
+            Button.inline("❓ Help", data=b"help"),
+        ]
+    ]
+
     await event.reply(
         premium_emoji(
             "<b>⚡💳 Welcome to Shopiiiii ! 💳⚡</b>\n"
@@ -407,7 +421,8 @@ async def start(event):
             "<b>─────────────────</b>\n"
             "<b>⚠️ Only premium users can use this bot.</b>"
         ),
-        parse_mode='html'
+        parse_mode='html',
+        buttons=buttons
     )
 
 @bot.on(events.NewMessage(pattern=r'^/cc\s+'))
@@ -880,6 +895,28 @@ async def stop_handler(event):
         del active_sessions[session_key]
         await event.answer(premium_emoji("🛑 Stopped"))
         await event.edit(premium_emoji("😡 **Checking stopped by user.**"))
+
+@bot.on(events.CallbackQuery(pattern=b"help"))
+async def help_handler(event):
+    help_text = premium_emoji(
+        "<b>⚡💳 Shopiiiii Bot Commands</b>\n"
+        "<b>─────────────────</b>\n\n"
+        "<b>💳 CC Checker:</b>\n"
+        "<code>/cc CARD|MM|YY|CVV</code> - Check single card\n"
+        "<code>/chk</code> - Check from file (reply to .txt)\n\n"
+        "<b>📍 Site Management:</b>\n"
+        "<code>/site</code> - Check & clean sites\n"
+        "<code>/rm URL</code> - Remove specific site\n\n"
+        "<b>🌐 Proxy Management:</b>\n"
+        "<code>/proxy</code> - Check & clean proxies\n"
+        "<code>/addproxy</code> - Add new proxies\n"
+        "<code>/getproxy</code> - View all proxies\n"
+        "<code>/clearproxy</code> - Remove all proxies\n\n"
+        "<b>─────────────────</b>\n"
+        "<b>⚠️ Premium Access Required</b>"
+    )
+    await event.edit(help_text, parse_mode='html')
+    await event.answer()
 
 print("✅ Bot started successfully!")
 bot.run_until_disconnected()
