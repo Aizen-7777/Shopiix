@@ -262,24 +262,21 @@ active_sessions = {}
 async def start_handler(event):
     """Start command with main menu"""
     buttons = [
-        [Button.inline("💳 Check Card", data=b"check"), Button.inline("📊 Stats", data=b"stats")],
-        [Button.inline("🔧 Tools", data=b"tools"), Button.inline("❓ Help", data=b"help")],
+        [
+            Button.inline("💳 CMDS", data=b"cmds_menu"),
+            Button.inline("🔌 Set Proxy", data=b"set_proxy"),
+        ],
+        [
+            Button.inline("👤 My Profile", data=b"my_profile"),
+        ],
     ]
 
     msg = EmojiRenderer.render(
-        "<b>⚡ SHOPIIIII - CC Checker Bot ⚡</b>\n\n"
-        "<b>━━━━━━━━━━━━━━━━━━━━</b>\n\n"
-        "🎯 <b>Fast & Reliable Card Checking</b>\n"
-        "🌐 <b>Multi-Site Support</b>\n"
-        "🔄 <b>Batch Processing</b>\n"
-        "📊 <b>Live Statistics</b>\n\n"
-        "<b>━━━━━━━━━━━━━━━━━━━━</b>\n\n"
-        "<b>📝 Commands:</b>\n"
-        "• <code>/cc CARD|MM|YY|CVV</code>\n"
-        "• <code>/chk</code> - From file\n"
-        "• <code>/site</code> - Manage sites\n"
-        "• <code>/proxy</code> - Manage proxies\n\n"
-        "<b>⚠️ Premium Access Required</b>"
+        "<b>WTF Welcome to Shopify CC Checker</b>\n\n"
+        "<b>⭐ High-speed Shopify gateway checker</b>\n"
+        "<b>✓ Supports all proxy formats</b>\n"
+        "<b>🌐 Multi-site rotation with retry logic</b>\n\n"
+        "<b>🔥 Use the menu below to get started:</b>"
     )
 
     await event.reply(msg, parse_mode='html', buttons=buttons)
@@ -537,23 +534,45 @@ async def proxy_check_handler(event):
     except Exception as e:
         await status.edit(EmojiRenderer.render(f"❌ Error: {str(e)[:80]}"), parse_mode='html')
 
-@bot.on(events.CallbackQuery(pattern=b"help"))
-async def help_callback(event):
-    """Help menu"""
+@bot.on(events.CallbackQuery(pattern=b"cmds_menu"))
+async def cmds_menu(event):
+    """Commands menu"""
     msg = EmojiRenderer.render(
-        "<b>❓ Bot Commands</b>\n\n"
-        "<b>/cc CARD|MM|YY|CVV</b> - Check card\n"
-        "<b>/chk</b> - From file\n"
-        "<b>/site</b> - Check sites\n"
-        "<b>/proxy</b> - Check proxies\n"
+        "<b>💳 Commands Menu</b>\n\n"
+        "<b>/cc CARD|MM|YY|CVV</b> - Check single card\n"
+        "<b>/chk</b> - Check from file\n"
+        "<b>/site</b> - Manage sites\n"
+        "<b>/proxy</b> - Manage proxies\n"
     )
     await event.edit(msg, parse_mode='html')
     await event.answer()
 
-@bot.on(events.CallbackQuery(pattern=b"check|stats|tools"))
-async def menu_callback(event):
-    """Menu callbacks"""
-    await event.answer("Select option", alert=False)
+@bot.on(events.CallbackQuery(pattern=b"set_proxy"))
+async def set_proxy_menu(event):
+    """Set proxy menu"""
+    msg = EmojiRenderer.render(
+        "<b>🔌 Set Proxy</b>\n\n"
+        "Use <code>/addproxy</code> to add proxies\n"
+        "Format: <code>ip:port:user:pass</code>\n\n"
+        "Send proxies one per line"
+    )
+    await event.edit(msg, parse_mode='html')
+    await event.answer()
+
+@bot.on(events.CallbackQuery(pattern=b"my_profile"))
+async def my_profile(event):
+    """User profile"""
+    user_id = event.sender_id
+    is_prem = DataManager.is_premium(user_id)
+    status = "✅ Premium" if is_prem else "❌ Regular"
+
+    msg = EmojiRenderer.render(
+        f"<b>👤 My Profile</b>\n\n"
+        f"<b>User ID:</b> <code>{user_id}</code>\n"
+        f"<b>Status:</b> {status}\n"
+    )
+    await event.edit(msg, parse_mode='html')
+    await event.answer()
 
 print("✅ Bot started successfully!")
 bot.run_until_disconnected()
