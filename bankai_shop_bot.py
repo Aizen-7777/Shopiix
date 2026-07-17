@@ -92,16 +92,32 @@ def generate_key():
     parts = [''.join(secrets.choice(chars) for _ in range(4)) for _ in range(4)]
     return 'BANKAI-' + '-'.join(parts)
 
-def add_premium(user_id: int):
-    lines = []
-    if os.path.exists(PREMIUM_FILE):
-        with open(PREMIUM_FILE, 'r') as f:
-            lines = [l.strip() for l in f if l.strip()]
-    uid = str(user_id)
-    if uid not in lines:
-        lines.append(uid)
-        with open(PREMIUM_FILE, 'w') as f:
-            f.write('\n'.join(lines) + '\n')
+PREMIUM_DATA_FILE = 'bankai_premium_data.json'
+
+def load_premium_data():
+    if not os.path.exists(PREMIUM_DATA_FILE):
+        return {}
+    try:
+        with open(PREMIUM_DATA_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_premium_data(data):
+    with open(PREMIUM_DATA_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+def add_premium(user_id: int, days: int = 0):
+    """days=0 means permanent."""
+    data = load_premium_data()
+    uid  = str(user_id)
+    if days > 0:
+        from datetime import timedelta
+        expiry = (datetime.now() + timedelta(days=days)).isoformat()
+    else:
+        expiry = None
+    data[uid] = {'expires': expiry, 'added': datetime.now().isoformat()}
+    save_premium_data(data)
 
 def get_rank(soul):
     c = soul['checks']
@@ -132,13 +148,40 @@ def load_proxies():
 def is_premium(user_id):
     if user_id == OWNER_ID:
         return True
-    if not os.path.exists(PREMIUM_FILE):
-        return False
-    try:
-        with open(PREMIUM_FILE, 'r') as f:
-            return str(user_id) in [l.strip() for l in f]
-    except:
-        return False
+    uid  = str(user_id)
+    data = load_premium_data()
+    if uid in data:
+        expiry = data[uid].get('expires')
+        if expiry is None:
+            return True
+        return datetime.fromisoformat(expiry) > datetime.now()
+    # fallback: old text file for permanent users
+    if os.path.exists(PREMIUM_FILE):
+        try:
+            with open(PREMIUM_FILE, 'r') as f:
+                return uid in [l.strip() for l in f]
+        except:
+            pass
+    return False
+
+def get_premium_expiry(user_id) -> str:
+    uid  = str(user_id)
+    data = load_premium_data()
+    if uid not in data:
+        if os.path.exists(PREMIUM_FILE):
+            try:
+                with open(PREMIUM_FILE, 'r') as f:
+                    if uid in [l.strip() for l in f]:
+                        return "♾️ Permanent"
+            except:
+                pass
+        return "None"
+    expiry = data[uid].get('expires')
+    if expiry is None:
+        return "♾️ Permanent"
+    dt = datetime.fromisoformat(expiry)
+    remaining = (dt - datetime.now()).days
+    return f"📅 {dt.strftime('%Y-%m-%d')} ({remaining}d left)"
 
 def extract_cards(text):
     pattern = r'(\d{15,16})\|(\d{2})\|(\d{2,4})\|(\d{3,4})'
@@ -667,12 +710,14 @@ async def bankai_handler(event):
     prem    = is_premium(user_id)
 
     if prem:
+        expiry = get_premium_expiry(user_id)
         msg = (
             "<b>🔥 『 BANKAI ACTIVE 』🔥</b>\n\n"
             "✅ Full Zanpakuto Arsenal unlocked\n"
             "✅ Unlimited checks\n"
             "✅ Batch processing\n"
             "✅ Priority routing\n\n"
+            f"<b>📅 Access expires:</b> {expiry}\n\n"
             "<b>⚫ You are a true Soul Reaper!</b>"
         )
     else:
@@ -774,22 +819,33 @@ async def genkey_handler(event):
         await event.reply("<b>⛔ Soul King Access Only</b>", parse_mode='html')
         return
 
+    # Usage: /genkey [count] [days]
+    # /genkey        → 1 key, permanent
+    # /genkey 5      → 5 keys, permanent
+    # /genkey 5 30   → 5 keys, 30 days each
     text  = event.message.text.strip().split()
     count = int(text[1]) if len(text) > 1 and text[1].isdigit() else 1
+    days  = int(text[2]) if len(text) > 2 and text[2].isdigit() else 0
     count = min(count, 20)
 
-    keys_data = load_keys()
-    new_keys  = []
+    keys_data  = load_keys()
+    new_keys   = []
     for _ in range(count):
         key = generate_key()
-        keys_data[key] = {'used': False, 'used_by': None, 'created': datetime.now().isoformat()}
+        keys_data[key] = {
+            'used': False, 'used_by': None,
+            'days': days,
+            'created': datetime.now().isoformat()
+        }
         new_keys.append(key)
     save_keys(keys_data)
 
+    duration  = f"{days} days" if days > 0 else "♾️ Permanent"
     key_lines = '\n'.join(f"<code>{k}</code>" for k in new_keys)
     await event.reply(
         f"<b>🔑 『 SOUL KEYS GENERATED 』</b>\n\n"
-        f"<b>Count:</b> {count}\n\n"
+        f"<b>Count:</b>    {count}\n"
+        f"<b>Duration:</b> {duration}\n\n"
         f"{key_lines}\n\n"
         f"<b>Users redeem with:</b> <code>/redeem KEY</code>",
         parse_mode='html'
@@ -823,16 +879,22 @@ async def redeem_handler(event):
         )
         return
 
+    days = keys_data[key].get('days', 0)
     keys_data[key]['used']    = True
     keys_data[key]['used_by'] = user_id
     keys_data[key]['used_at'] = datetime.now().isoformat()
     save_keys(keys_data)
-    add_premium(user_id)
+    add_premium(user_id, days)
+
+    duration = f"{days} days" if days > 0 else "♾️ Permanent"
+    expiry   = get_premium_expiry(user_id)
 
     await event.reply(
         f"<b>🔥 『 BANKAI UNLOCKED 』🔥</b>\n\n"
         f"<b>✅ Key accepted!</b>\n"
-        f"<b>💜 Soul ID:</b> <code>{user_id}</code>\n\n"
+        f"<b>💜 Soul ID:</b>  <code>{user_id}</code>\n"
+        f"<b>⏳ Duration:</b> {duration}\n"
+        f"<b>📅 Expires:</b>  {expiry}\n\n"
         f"You now have full Zanpakuto Arsenal access:\n"
         f"• /cc — Single card check\n"
         f"• /chk — Batch file check\n\n"
@@ -844,8 +906,10 @@ async def redeem_handler(event):
         await bot.send_message(
             OWNER_ID,
             f"<b>🔑 Key Redeemed</b>\n\n"
-            f"<b>Key:</b> <code>{key}</code>\n"
-            f"<b>User:</b> <code>{user_id}</code>",
+            f"<b>Key:</b>     <code>{key}</code>\n"
+            f"<b>User:</b>    <code>{user_id}</code>\n"
+            f"<b>Duration:</b> {duration}\n"
+            f"<b>Expires:</b>  {expiry}",
             parse_mode='html'
         )
     except Exception:
