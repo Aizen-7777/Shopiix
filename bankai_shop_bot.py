@@ -21,8 +21,8 @@ from datetime import datetime
 # ============================================================================
 
 BOT_TOKEN  = '8692888647:AAGBRVuhOBnNe5jIi71o7sLBAYOY6JBsevQ'
-API_ID     = 'ADD_YOUR_API_ID'      # ← from my.telegram.org
-API_HASH   = 'ADD_YOUR_API_HASH'    # ← from my.telegram.org
+API_ID     = 32253547
+API_HASH   = '868242502bea6a1e41b2ce46001d0580'
 
 # Second file's API endpoint (deploy auto.py on Railway and paste URL here)
 CHECKER_API = 'https://web-production-1b828.up.railway.app/shopify'
