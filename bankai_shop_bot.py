@@ -294,6 +294,17 @@ async def get_bin_info(card_number: str) -> dict:
 SESSION_STRING = os.environ.get('SESSION_STRING', '')
 _session = StringSession(SESSION_STRING) if SESSION_STRING else StringSession()
 bot = TelegramClient(_session, API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+
+if not SESSION_STRING:
+    _saved = bot.session.save()
+    print("\n" + "=" * 60)
+    print("⚠️  SESSION_STRING is not set!")
+    print("Copy the string below and add it to Railway Variables")
+    print("as SESSION_STRING then redeploy:")
+    print("=" * 60)
+    print(_saved)
+    print("=" * 60 + "\n")
+
 active_sessions = {}
 
 # ============================================================================
