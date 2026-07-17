@@ -6,6 +6,7 @@ Soul Reaper Grade Checker - Powered by Zanpakuto Engine
 """
 
 from telethon import TelegramClient, events, Button
+from telethon.sessions import StringSession
 import asyncio
 import aiohttp
 import aiofiles
@@ -179,7 +180,9 @@ async def get_bin_info(card_number: str) -> dict:
 # 🎮 BOT INIT
 # ============================================================================
 
-bot = TelegramClient('bankai_shop', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+SESSION_STRING = os.environ.get('SESSION_STRING', '')
+_session = StringSession(SESSION_STRING) if SESSION_STRING else StringSession()
+bot = TelegramClient(_session, API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 active_sessions = {}
 
 # ============================================================================
