@@ -145,6 +145,10 @@ def load_proxies():
     except:
         return []
 
+def save_proxies(proxies):
+    with open(PROXY_FILE, 'w') as f:
+        f.write('\n'.join(proxies) + '\n')
+
 def is_premium(user_id):
     if user_id == OWNER_ID:
         return True
@@ -449,7 +453,7 @@ async def check_single(event):
             f"<b>🌍 Country:</b>{country}\n"
             f"<b>📋 Type:</b>   {card_type} | {level}\n\n"
             f"<b>━━━━━━ RESPONSE ━━━━━━</b>\n"
-            f"<code>{result['code'][:180]}</code>\n\n"
+            f"<code>{(result.get('code') or result.get('raw') or 'No details')[:180]}</code>\n\n"
             f"<b>💜 Reiatsu:</b> {get_reiatsu_bar(soul['reiatsu'])}"
         )
 
@@ -642,7 +646,8 @@ async def usage_cc(event):
         "• BIN Info (Bank, Brand, Country)\n"
         "• Response code\n"
         "• Reiatsu update",
-        parse_mode='html'
+        parse_mode='html',
+        buttons=[[Button.inline("🔙 Back", data=b"zanpakuto")]]
     )
     await event.answer()
 
@@ -660,7 +665,8 @@ async def usage_chk(event):
         "• Pause / Stop controls\n"
         "• Hits summary at end\n"
         "• Reiatsu gained per check",
-        parse_mode='html'
+        parse_mode='html',
+        buttons=[[Button.inline("🔙 Back", data=b"zanpakuto")]]
     )
     await event.answer()
 
@@ -686,7 +692,8 @@ async def stats_handler(event):
         f"<b>❌ Declined:</b>   {soul['declined']}\n\n"
         f"<b>━━━━━ NEXT RANK ━━━━━</b>\n"
         f"<b>Checks to next rank:</b> {max(0, [10,50,150,300][min(3, ['Academy','Seated','Captain','Kenpachi'].index(rank.split()[0]) if any(x in rank for x in ['Academy','Seated','Captain','Kenpachi']) else 3)] - soul['checks'])}",
-        parse_mode='html'
+        parse_mode='html',
+        buttons=[[Button.inline("🔙 Back", data=b"back_start")]]
     )
     await event.answer()
 
@@ -711,7 +718,8 @@ async def reiatsu_handler(event):
         f"⚡ Charged = +10%\n"
         f"✅ Approved = +5%\n"
         f"❌ Declined = +1%",
-        parse_mode='html'
+        parse_mode='html',
+        buttons=[[Button.inline("🔙 Back", data=b"back_start")]]
     )
     await event.answer()
 
@@ -744,7 +752,7 @@ async def bankai_handler(event):
             "• Unlimited usage"
         )
 
-    await event.edit(msg, parse_mode='html')
+    await event.edit(msg, parse_mode='html', buttons=[[Button.inline("🔙 Back", data=b"back_start")]])
     await event.answer("🔥 BANKAI!", alert=not prem)
 
 @bot.on(events.CallbackQuery(pattern=b"proxy_info"))
@@ -755,8 +763,13 @@ async def proxy_info_handler(event):
         f"<b>Loaded proxies:</b> {len(proxies)}\n\n"
         f"<b>Format:</b>\n"
         f"<code>ip:port:user:pass</code>\n\n"
-        f"<b>Add proxies:</b> Edit proxy.txt",
-        parse_mode='html'
+        f"<b>Add proxies via command:</b>\n"
+        f"<code>/addproxy\n"
+        f"ip:port:user:pass\n"
+        f"ip:port:user:pass</code>\n\n"
+        f"<b>Clear all:</b> <code>/clearproxy</code>",
+        parse_mode='html',
+        buttons=[[Button.inline("🔙 Back", data=b"back_start")]]
     )
     await event.answer()
 
@@ -776,7 +789,8 @@ async def api_status_handler(event):
         f"<b>🟡 『 API STATUS 』</b>\n\n"
         f"<b>Zanpakuto Engine:</b> {status}\n"
         f"<b>Endpoint:</b> <code>{CHECKER_API}</code>",
-        parse_mode='html'
+        parse_mode='html',
+        buttons=[[Button.inline("🔙 Back", data=b"zanpakuto")]]
     )
 
 @bot.on(events.CallbackQuery(pattern=b"society"))
@@ -792,7 +806,8 @@ async def society_handler(event):
         f"<b>⚔️ Total Checks:</b>  {total_checks}\n"
         f"<b>💎 Total Charged:</b> {total_charged}\n\n"
         f"<b>🌟 Powered by Zanpakuto Engine</b>",
-        parse_mode='html'
+        parse_mode='html',
+        buttons=[[Button.inline("🔙 Back", data=b"back_start")]]
     )
     await event.answer()
 
@@ -818,6 +833,54 @@ async def stop_handler(event):
         active_sessions[sid]['stopped'] = True
         del active_sessions[sid]
     await event.answer("🛑 Stopping...", alert=False)
+
+# ============================================================================
+# 🌐 /addproxy - ADD PROXIES VIA TELEGRAM
+# ============================================================================
+
+@bot.on(events.NewMessage(pattern=r'^/addproxy'))
+async def addproxy_handler(event):
+    if event.sender_id != OWNER_ID:
+        await event.reply("<b>⛔ Owner only</b>", parse_mode='html')
+        return
+
+    text  = event.message.text.replace('/addproxy', '').strip()
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+
+    if not lines:
+        await event.reply(
+            "<b>🌐 Add Proxies</b>\n\n"
+            "<b>Usage:</b>\n"
+            "<code>/addproxy\n"
+            "ip:port:user:pass\n"
+            "ip:port:user:pass</code>\n\n"
+            "Paste all proxies after the command.",
+            parse_mode='html'
+        )
+        return
+
+    existing = load_proxies()
+    added    = 0
+    for line in lines:
+        if line not in existing:
+            existing.append(line)
+            added += 1
+    save_proxies(existing)
+
+    await event.reply(
+        f"<b>✅ Proxies Updated</b>\n\n"
+        f"<b>Added:</b> {added}\n"
+        f"<b>Total:</b> {len(existing)}",
+        parse_mode='html'
+    )
+
+@bot.on(events.NewMessage(pattern=r'^/clearproxy'))
+async def clearproxy_handler(event):
+    if event.sender_id != OWNER_ID:
+        await event.reply("<b>⛔ Owner only</b>", parse_mode='html')
+        return
+    save_proxies([])
+    await event.reply("<b>✅ All proxies cleared</b>", parse_mode='html')
 
 # ============================================================================
 # 🔑 /genkey - OWNER ONLY KEY GENERATOR
