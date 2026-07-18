@@ -146,10 +146,16 @@ async def check_card(card, proxy=''):
         params = {'cc': card}
         if proxy:
             params['proxy'] = proxy
-        timeout = aiohttp.ClientTimeout(total=35)
+        timeout = aiohttp.ClientTimeout(total=60)
         async with aiohttp.ClientSession(timeout=timeout) as s:
             async with s.get(CHECKER_API, params=params) as r:
-                d = await r.json(content_type=None)
+                raw_text = await r.text()
+                try:
+                    d = json.loads(raw_text)
+                except:
+                    return {'result': 'ERROR', 'gate': '-', 'price': '-', 'site': '-',
+                            'time': '-', 'receipt': '', 'response': 'PARSE_ERROR',
+                            'detail': raw_text[:300]}
 
         resp    = str(d.get('Response', '')).upper()
         gate    = d.get('Gate', 'Shopify')
@@ -157,7 +163,10 @@ async def check_card(card, proxy=''):
         site    = d.get('Site', '-')
         elapsed = d.get('Time', '-')
         receipt = d.get('Receipt', '')
-        detail  = d.get('ErrorDetail', '') or d.get('Status', '') or resp
+        msg     = d.get('Message', '')
+        status  = d.get('Status', '')
+        err     = d.get('ErrorDetail', '')
+        detail  = err or status or msg or resp
         charged = str(d.get('Charged', 'False')).lower() == 'true'
         approved = str(d.get('Approved', 'False')).lower() == 'true'
 
@@ -173,7 +182,7 @@ async def check_card(card, proxy=''):
                                     'PICKUP', 'BLOCKED', 'RESTRICTED', 'FRAUD',
                                     'EXCEEDS', 'NOT PERMITTED', 'SECURITY')):
             return {**base, 'result': 'DECLINED'}
-        return {**base, 'result': 'ERROR'}
+        return {**base, 'result': 'DECLINED', 'detail': detail or raw_text[:200]}
 
     except asyncio.TimeoutError:
         return {'result': 'TIMEOUT', 'gate': '-', 'price': '-', 'site': '-',
