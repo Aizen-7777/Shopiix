@@ -1489,30 +1489,46 @@ async def add_site_command(event):
     to_check = [u for u in candidates if u not in current_sites]
 
     status_msg = await event.reply(
-        premium_emoji(f"⏳ <b>Validating {len(to_check)} site(s)...</b>"),
+        premium_emoji(f"⏳ <b>Validating {len(to_check)} site(s)...</b>\n\n"
+                      f"<b>Checked:</b> 0/{len(to_check)}\n"
+                      f"<b>Alive:</b> 0  <b>Dead:</b> 0"),
         parse_mode='html'
     )
 
     proxies = load_proxies()
-    proxy = random.choice(proxies) if proxies else None
-
+    semaphore = asyncio.Semaphore(20)
     added = []
     failed = []
+    done_count = 0
+    last_edit = time.time()
 
-    for site in to_check:
-        try:
-            info = await fetch_products(site, proxy)
-            if isinstance(info, dict) and info.get('variant_id'):
-                added.append({
-                    'url': site,
-                    'price': info.get('price', '-'),
-                    'link': info.get('link', site),
-                })
-            else:
-                err = info[1] if isinstance(info, tuple) else 'Not Shopify / No Products'
-                failed.append((site, err))
-        except Exception as e:
-            failed.append((site, str(e)[:60]))
+    async def validate_one(site):
+        nonlocal done_count, last_edit
+        proxy = random.choice(proxies) if proxies else None
+        async with semaphore:
+            try:
+                info = await fetch_products(site, proxy)
+                if isinstance(info, dict) and info.get('variant_id'):
+                    added.append({'url': site, 'price': info.get('price', '-'), 'link': info.get('link', site)})
+                else:
+                    err = info[1] if isinstance(info, tuple) else 'Not Shopify / No Products'
+                    failed.append((site, err))
+            except Exception as e:
+                failed.append((site, str(e)[:60]))
+            done_count += 1
+            if time.time() - last_edit >= 3:
+                last_edit = time.time()
+                try:
+                    await status_msg.edit(
+                        premium_emoji(f"⏳ <b>Validating {len(to_check)} site(s)...</b>\n\n"
+                                      f"<b>Checked:</b> {done_count}/{len(to_check)}\n"
+                                      f"<b>Alive:</b> {len(added)}  <b>Dead:</b> {len(failed)}"),
+                        parse_mode='html'
+                    )
+                except Exception:
+                    pass
+
+    await asyncio.gather(*[validate_one(site) for site in to_check])
 
     if added:
         async with aiofiles.open(SITES_FILE, 'a') as f:
