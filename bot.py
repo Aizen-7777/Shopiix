@@ -239,21 +239,21 @@ async def send_realtime_hit(user_id, result, hit_type, username):
     brand, bin_type, level, bank, country, flag = await get_bin_info(result['card'].split('|')[0])
     current_date = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-    message = f"""<b>⚡💳 ㅤ#𝑒𝑝𝑜𝑝𝑖𝑖𝑖  💳⚡</b>
-<b>─────────────────</b>
-<b>⚡💠 𝐇𝐢𝐭 𝐅𝐨𝐞𝐧𝐝!</b>
-<blockquote>{emoji} Status: {status_text}</blockquote>
-<blockquote>💳 Card: <code>{result['card']}</code></blockquote>
-<blockquote>📝 Response: {result['message'][:150]}</blockquote>
-<blockquote>🌐 𝐆𝐚𝐭𝐞𝐦𝐚𝐲: 🔥 {result.get('gateway', 'Unknown')} | 💰 {result.get('price', '-')}</blockquote>
-<b>─────────────────</b>
-<b>🎯💠 𝐁𝐈𝐍 𝐈𝐧𝐟𝐨</b>
-<pre>𝗢𝗜𝗡 𝗜𝗻𝗳𝗼: {brand} - {bin_type} - {level}
-𝗕𝗮𝗻𝗸: {bank}
-𝗖𝗼𝘂𝗻𝘁𝗿𝘆: {country} {flag}</pre>
-<b>─────────────────</b>
-
-🤖 <b>Bot By: <a href="tg://user?id=5895386985">ㅤＡｉｚｅｎ</a></b>"""
+    message = (
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"{emoji} <b>Hit Found — {status_text}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n\n"
+        f"💳 <code>{result['card']}</code>\n"
+        f"📝 <i>{result['message'][:150]}</i>\n"
+        f"🌐 {result.get('gateway', 'Unknown')}  ·  💰 {result.get('price', '-')}\n\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💠 <b>BIN Info</b>\n"
+        f"<blockquote>{brand} · {bin_type} · {level}\n"
+        f"{bank}\n"
+        f"{country} {flag}</blockquote>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🤖 <b>Bot By:</b> <a href=\"tg://user?id=5895386985\">Aizen</a>"
+    )
 
     try:
         await bot.send_message(user_id, premium_emoji(message), parse_mode='html')
@@ -447,11 +447,8 @@ async def single_cc_check(event):
 
     status_msg = await event.reply(
         premium_emoji(
-            f"<b>⚡💳 ㅤ#𝑒𝑝𝑜𝑝𝑖𝑖𝑖  💳⚡</b>\n"
-            f"<b>─────────────────</b>\n"
-            f"<b>⚡💠 𝐂𝐡𝐞𝐜𝐤𝐢𝐧𝐠...</b>\n"
-            f"<blockquote>💳 Card: <code>{card}</code></blockquote>\n"
-            f"<b>─────────────────</b>"
+            f"⏳ <b>Checking...</b>\n"
+            f"<code>{card}</code>"
         ),
         parse_mode='html'
     )
@@ -470,21 +467,21 @@ async def single_cc_check(event):
             status_emoji = "❌"
             status_text = "𝐃𝐞𝐚𝐝"
 
-        final_resp = f"""<b>⚡💳 ㅤ#𝑒𝑝𝑜𝑝𝑖𝑖𝑖  💳⚡</b>
-<b>─────────────────</b>
-<b>⚡💠 𝐑𝐞𝐬𝐞𝐬𝐯𝐞𝐬𝐭𝐬</b>
-<blockquote>{status_emoji} Status: {status_text}</blockquote>
-<blockquote>💳 Card: <code>{result['card']}</code></blockquote>
-<blockquote>📝 Response: {result['message'][:150]}</blockquote>
-<blockquote>🌐 𝐆𝐚𝐭𝐞𝐦𝐚𝐲: 🔥 {result.get('gateway', 'Unknown')} | 💰 {result.get('price', '-')}</blockquote>
-<b>─────────────────</b>
-<b>🎯💠 𝐁𝐈𝐍 𝐈𝐧𝐟𝐨</b>
-<pre>𝗢𝗜𝗡 𝗜𝗻𝗳𝗼: {brand} - {bin_type} - {level}
-𝗕𝗮𝗻𝗸: {bank}
-𝗖𝗼𝘂𝗻𝘁𝗿𝘆: {country} {flag}</pre>
-<b>─────────────────</b>
-
-🤖 <b>Bot By: <a href="tg://user?id=5895386985">ㅤＡｉｚｅｎ</a></b>"""
+        final_resp = (
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"{status_emoji} <b>{status_text}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n\n"
+            f"💳 <code>{result['card']}</code>\n"
+            f"📝 <i>{result['message'][:150]}</i>\n"
+            f"🌐 {result.get('gateway', 'Unknown')}  ·  💰 {result.get('price', '-')}\n\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"💠 <b>BIN Info</b>\n"
+            f"<blockquote>{brand} · {bin_type} · {level}\n"
+            f"{bank}\n"
+            f"{country} {flag}</blockquote>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🤖 <b>Bot By:</b> <a href=\"tg://user?id=5895386985\">Aizen</a>"
+        )
 
         await status_msg.edit(premium_emoji(final_resp), parse_mode='html')
 
