@@ -1279,19 +1279,61 @@ async def single_cc_check(event):
     except Exception as e:
         await status_msg.edit(premium_emoji(f"❌ Error checking card: {e}"), parse_mode='html')
 
-@bot.on(events.NewMessage(pattern=r'^/chkproxy\s+'))
+@bot.on(events.NewMessage(pattern=r'^/chkproxy'))
 async def check_single_proxy(event):
     user_id = event.sender_id
     if not is_premium(user_id):
         await event.reply(premium_emoji("❌ <b>Access Denied</b>"), parse_mode='html')
         return
-    proxy = event.message.text.split(' ', 1)[1].strip()
-    status_msg = await event.reply(premium_emoji(f"🔄 Checking proxy: <code>{proxy}</code>..."), parse_mode='html')
-    result = await test_proxy(proxy)
-    if result['status'] == 'alive':
-        await status_msg.edit(premium_emoji(f"✅ <b>Proxy is ALIVE!</b>\n\n<code>{proxy}</code>"), parse_mode='html')
+
+    raw_lines = []
+    reply = await event.get_reply_message() if event.message.reply_to_msg_id else None
+    if reply and reply.document:
+        buf = await reply.download_media(bytes)
+        raw_lines = buf.decode('utf-8', errors='ignore').splitlines()
+    elif reply and reply.text:
+        raw_lines = reply.text.splitlines()
     else:
-        await status_msg.edit(premium_emoji(f"❌ <b>Proxy is DEAD!</b>\n\n<code>{proxy}</code>"), parse_mode='html')
+        parts = event.message.text.split(None, 1)
+        if len(parts) < 2 or not parts[1].strip():
+            await event.reply(
+                premium_emoji("❌ <b>Usage:</b>\n\n"
+                              "<code>/chkproxy ip:port:user:pass</code>\n"
+                              "— or —\n"
+                              "Reply to a <code>.txt</code> file with one proxy per line."),
+                parse_mode='html'
+            )
+            return
+        raw_lines = parts[1].strip().splitlines()
+
+    proxies_to_check = [l.strip() for l in raw_lines if l.strip()]
+    if not proxies_to_check:
+        await event.reply(premium_emoji("❌ No proxies found."), parse_mode='html')
+        return
+
+    status_msg = await event.reply(
+        premium_emoji(f"🔄 <b>Checking {len(proxies_to_check)} proxy(s)...</b>"),
+        parse_mode='html'
+    )
+    alive, dead = [], []
+    for p in proxies_to_check:
+        res = await test_proxy(p)
+        if res['status'] == 'alive':
+            alive.append(p)
+        else:
+            dead.append(p)
+
+    lines = [premium_emoji(f"🔄 <b>Proxy Check Result</b>\n━━━━━━━━━━━━━━━━━━\n\n")]
+    if alive:
+        lines.append(f"✅ <b>Live ({len(alive)}):</b>\n")
+        for p in alive:
+            lines.append(f"• <code>{p}</code>\n")
+        lines.append("\n")
+    if dead:
+        lines.append(f"❌ <b>Dead ({len(dead)}):</b>\n")
+        for p in dead:
+            lines.append(f"• <code>{p}</code>\n")
+    await status_msg.edit(''.join(lines), parse_mode='html')
 
 @bot.on(events.NewMessage(pattern=r'^/rmproxy\s+'))
 async def remove_single_proxy(event):
@@ -1402,23 +1444,97 @@ async def add_proxy_command(event):
     if not is_premium(user_id):
         await event.reply(premium_emoji("❌ <b>Access Denied</b>"), parse_mode='html')
         return
-    args = event.message.text.split('\n')
-    if len(args) < 2:
-        await event.reply(premium_emoji("❌ Usage: <code>/addproxy</code> followed by proxies, one per line."), parse_mode='html')
-        return
-    proxies_to_add = [line.strip() for line in args[1:] if line.strip()]
+
+    raw_lines = []
+    reply = await event.get_reply_message() if event.message.reply_to_msg_id else None
+    if reply and reply.document:
+        buf = await reply.download_media(bytes)
+        raw_lines = buf.decode('utf-8', errors='ignore').splitlines()
+    elif reply and reply.text:
+        raw_lines = reply.text.splitlines()
+    else:
+        args = event.message.text.split('\n')
+        raw_lines = args[1:] if len(args) > 1 else []
+
+    proxies_to_add = [l.strip() for l in raw_lines if l.strip()]
     if not proxies_to_add:
-        await event.reply(premium_emoji("❌ No proxies provided."), parse_mode='html')
+        await event.reply(
+            premium_emoji("❌ <b>Usage:</b>\n\n"
+                          "Send proxies after the command (one per line):\n"
+                          "<code>/addproxy\nip:port:user:pass\nip:port:user:pass</code>\n\n"
+                          "— or —\n"
+                          "Reply to a <code>.txt</code> file with one proxy per line."),
+            parse_mode='html'
+        )
         return
+
     current_proxies = load_proxies()
-    new_proxies = [p for p in proxies_to_add if p not in current_proxies]
-    if not new_proxies:
-        await event.reply(premium_emoji("⚠️ All provided proxies already exist in <code>proxy.txt</code>."), parse_mode='html')
+    already = [p for p in proxies_to_add if p in current_proxies]
+    to_check = list(dict.fromkeys([p for p in proxies_to_add if p not in current_proxies]))
+
+    if not to_check:
+        await event.reply(premium_emoji(f"⚠️ All {len(already)} proxies already exist."), parse_mode='html')
         return
-    async with aiofiles.open(PROXY_FILE, 'a') as f:
-        for proxy in new_proxies:
-            await f.write(f"{proxy}\n")
-    await event.reply(premium_emoji(f"✅ <b>Proxies Added!</b>\n\nAdded {len(new_proxies)} new proxies."), parse_mode='html')
+
+    status_msg = await event.reply(
+        premium_emoji(f"⏳ <b>Validating {len(to_check)} proxy(s)...</b>\n\n"
+                      f"<b>Checked:</b> 0/{len(to_check)}\n"
+                      f"<b>Live:</b> 0  <b>Dead:</b> 0"),
+        parse_mode='html'
+    )
+
+    semaphore = asyncio.Semaphore(15)
+    live, dead = [], []
+    done_count = 0
+    last_edit = time.time()
+
+    async def validate_proxy(p):
+        nonlocal done_count, last_edit
+        async with semaphore:
+            res = await test_proxy(p)
+            if res['status'] == 'alive':
+                live.append(p)
+            else:
+                dead.append(p)
+            done_count += 1
+            if time.time() - last_edit >= 3:
+                last_edit = time.time()
+                try:
+                    await status_msg.edit(
+                        premium_emoji(f"⏳ <b>Validating {len(to_check)} proxy(s)...</b>\n\n"
+                                      f"<b>Checked:</b> {done_count}/{len(to_check)}\n"
+                                      f"<b>Live:</b> {len(live)}  <b>Dead:</b> {len(dead)}"),
+                        parse_mode='html'
+                    )
+                except Exception:
+                    pass
+
+    await asyncio.gather(*[validate_proxy(p) for p in to_check])
+
+    if live:
+        async with aiofiles.open(PROXY_FILE, 'a') as f:
+            for p in live:
+                await f.write(f"{p}\n")
+
+    lines = [premium_emoji("🔄 <b>Add Proxies — Result</b>\n━━━━━━━━━━━━━━━━━━\n\n")]
+    if live:
+        lines.append(f"✅ <b>Live & Added ({len(live)}):</b>\n")
+        for p in live:
+            lines.append(f"• <code>{p}</code>\n")
+        lines.append("\n")
+    if dead:
+        lines.append(f"❌ <b>Dead — Skipped ({len(dead)}):</b>\n")
+        for p in dead:
+            lines.append(f"• <code>{p}</code>\n")
+        lines.append("\n")
+    if already:
+        lines.append(f"⚠️ <b>Already exists ({len(already)}):</b>\n")
+        for p in already:
+            lines.append(f"• <code>{p}</code>\n")
+        lines.append("\n")
+    total = len(load_proxies())
+    lines.append(f"━━━━━━━━━━━━━━━━━━\n📦 <b>Total proxies:</b> {total}")
+    await status_msg.edit(''.join(lines), parse_mode='html')
 
 @bot.on(events.NewMessage(pattern=r'^/rm\s+'))
 async def remove_site_command(event):
@@ -1577,7 +1693,7 @@ async def get_site_command(event):
     await event.reply(''.join(lines), parse_mode='html')
 
 
-@bot.on(events.NewMessage(pattern='/chk'))
+@bot.on(events.NewMessage(pattern=r'^/chk(\s|$)'))
 async def check_command(event):
     user_id = event.sender_id
     try:
