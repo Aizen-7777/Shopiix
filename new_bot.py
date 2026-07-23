@@ -932,7 +932,7 @@ def premium_emoji(text):
 
 API_ID = 21124241
 API_HASH = 'b7ddce3d3683f54be788fddae73fa468'
-BOT_TOKEN = '8914967757:AAG_SqyEghOD8Zr_2Tzskw8qbD6VWgFoGCI'
+BOT_TOKEN = '8692888647:AAEkzd5UpJLhAWSrO0BIS5B1cH6CQWmMyPU'
 
 PREMIUM_FILE = 'premium.txt'
 SITES_FILE = 'sites.txt'
