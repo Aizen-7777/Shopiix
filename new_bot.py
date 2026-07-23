@@ -1206,7 +1206,9 @@ async def start(event):
             "<blockquote>/cc <code>card|mm|yy|cvv</code> — Single check\n"
             "/chk — Bulk check (reply to .txt)</blockquote>\n\n"
             "🌐 <b>Sites</b>\n"
-            "<blockquote>/site — Check & clean dead sites\n"
+            "<blockquote>/addsite <code>url</code> — Add site (or reply to .txt)\n"
+            "/getsite — List all sites\n"
+            "/site — Check & clean dead sites\n"
             "/rm <code>url</code> — Remove a site</blockquote>\n\n"
             "🔄 <b>Proxies</b>\n"
             "<blockquote>/proxy — Check & clean dead proxies\n"
@@ -1434,6 +1436,130 @@ async def remove_site_command(event):
         for site in new_sites:
             await f.write(f"{site}\n")
     await event.reply(premium_emoji(f"✅ <b>Site Removed!</b>\n\n<code>{url_to_remove}</code>"), parse_mode='html')
+
+@bot.on(events.NewMessage(pattern=r'^/addsite'))
+async def add_site_command(event):
+    user_id = event.sender_id
+    if not is_premium(user_id):
+        await event.reply(premium_emoji("❌ <b>Access Denied</b>"), parse_mode='html')
+        return
+
+    raw_lines = []
+
+    reply = await event.get_reply_message() if event.message.reply_to_msg_id else None
+    if reply and reply.document:
+        try:
+            buf = await reply.download_media(bytes)
+            raw_lines = buf.decode('utf-8', errors='ignore').splitlines()
+        except Exception:
+            await event.reply(premium_emoji("❌ Could not read file."), parse_mode='html')
+            return
+    elif reply and reply.text:
+        raw_lines = reply.text.splitlines()
+    else:
+        parts = event.message.text.split(None, 1)
+        if len(parts) < 2 or not parts[1].strip():
+            await event.reply(
+                premium_emoji(
+                    "❌ <b>Usage:</b>\n\n"
+                    "<code>/addsite https://store.com</code>\n"
+                    "— or —\n"
+                    "Reply to a <code>.txt</code> file with one URL per line."
+                ),
+                parse_mode='html'
+            )
+            return
+        raw_lines = parts[1].strip().splitlines()
+
+    def normalize(u):
+        u = u.strip()
+        if not u or '.' not in u:
+            return None
+        if not u.startswith('http'):
+            u = 'https://' + u
+        return u.rstrip('/')
+
+    candidates = list(dict.fromkeys(filter(None, [normalize(l) for l in raw_lines])))
+    if not candidates:
+        await event.reply(premium_emoji("❌ No valid URLs found."), parse_mode='html')
+        return
+
+    current_sites = load_sites()
+    already = [u for u in candidates if u in current_sites]
+    to_check = [u for u in candidates if u not in current_sites]
+
+    status_msg = await event.reply(
+        premium_emoji(f"⏳ <b>Validating {len(to_check)} site(s)...</b>"),
+        parse_mode='html'
+    )
+
+    proxies = load_proxies()
+    proxy = random.choice(proxies) if proxies else None
+
+    added = []
+    failed = []
+
+    for site in to_check:
+        try:
+            info = await fetch_products(site, proxy)
+            if isinstance(info, dict) and info.get('variant_id'):
+                added.append({
+                    'url': site,
+                    'price': info.get('price', '-'),
+                    'link': info.get('link', site),
+                })
+            else:
+                err = info[1] if isinstance(info, tuple) else 'Not Shopify / No Products'
+                failed.append((site, err))
+        except Exception as e:
+            failed.append((site, str(e)[:60]))
+
+    if added:
+        async with aiofiles.open(SITES_FILE, 'a') as f:
+            for s in added:
+                await f.write(f"{s['url']}\n")
+
+    lines = [premium_emoji("🌐 <b>Add Sites — Result</b>\n━━━━━━━━━━━━━━━━━━\n\n")]
+
+    if added:
+        lines.append(f"✅ <b>Added ({len(added)}):</b>\n")
+        for s in added:
+            lines.append(f"• <code>{s['url']}</code>\n  ↳ 💰 ${s['price']}\n")
+        lines.append("\n")
+
+    if failed:
+        lines.append(f"❌ <b>Failed ({len(failed)}):</b>\n")
+        for url, reason in failed:
+            lines.append(f"• <code>{url}</code>\n  ↳ {reason}\n")
+        lines.append("\n")
+
+    if already:
+        lines.append(f"⚠️ <b>Already exists ({len(already)}):</b>\n")
+        for u in already:
+            lines.append(f"• <code>{u}</code>\n")
+        lines.append("\n")
+
+    total = len(load_sites())
+    lines.append(f"━━━━━━━━━━━━━━━━━━\n📦 <b>Total sites:</b> {total}")
+
+    await status_msg.edit(''.join(lines), parse_mode='html')
+
+
+@bot.on(events.NewMessage(pattern='/getsite'))
+async def get_site_command(event):
+    user_id = event.sender_id
+    if not is_premium(user_id):
+        await event.reply(premium_emoji("❌ <b>Access Denied</b>"), parse_mode='html')
+        return
+    sites = load_sites()
+    if not sites:
+        await event.reply(premium_emoji("❌ No sites loaded."), parse_mode='html')
+        return
+    lines = [premium_emoji(f"🌐 <b>Sites ({len(sites)})</b>\n━━━━━━━━━━━━━━━━━━\n\n")]
+    for i, s in enumerate(sites, 1):
+        lines.append(f"{i}. <code>{s}</code>\n")
+    await event.reply(''.join(lines), parse_mode='html')
+
 
 @bot.on(events.NewMessage(pattern='/chk'))
 async def check_command(event):
