@@ -1025,7 +1025,14 @@ def load_premium_users():
     return get_file_lines(PREMIUM_FILE)
 
 def load_sites():
-    return get_file_lines(SITES_FILE)
+    sites = []
+    for line in get_file_lines(SITES_FILE):
+        parts = line.split('|', 2)
+        url = parts[0].strip()
+        variant_id = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
+        price = parts[2].strip() if len(parts) > 2 else '-'
+        sites.append({'url': url, 'variant_id': variant_id, 'price': price})
+    return sites
 
 def load_proxies():
     return get_file_lines(PROXY_FILE)
@@ -1086,18 +1093,20 @@ def classify_result(success, message):
 
 async def check_card_embedded(card, site, proxy):
     """Wrapper around process_card returning same dict format as old check_card."""
+    site_url = site['url'] if isinstance(site, dict) else site
+    variant_id = site.get('variant_id') if isinstance(site, dict) else None
     try:
         parts = card.split('|')
         if len(parts) != 4:
             return {'status': 'Dead', 'message': 'Invalid card format', 'card': card, 'gateway': 'Unknown', 'price': '-'}
         cc, mes, ano, cvv = parts
-        success, message, gateway, price, currency = await process_card(cc, mes, ano, cvv, site, proxy_str=proxy)
+        success, message, gateway, price, currency = await process_card(cc, mes, ano, cvv, site_url, variant_id=variant_id, proxy_str=proxy)
         status = classify_result(success, message)
         if status == 'SiteError':
             return {'status': 'Site Error', 'message': message, 'card': card, 'retry': True, 'gateway': gateway, 'price': price}
         clean_msg = message.replace("_", " ").title()
         price_display = f"{float(price):.2f} {currency}" if price and price != "0.00" else '-'
-        return {'status': status, 'message': clean_msg, 'card': card, 'site': site, 'gateway': gateway, 'price': price_display}
+        return {'status': status, 'message': clean_msg, 'card': card, 'site': site_url, 'gateway': gateway, 'price': price_display}
     except Exception as e:
         return {'status': 'Site Error', 'message': str(e), 'card': card, 'retry': True, 'gateway': 'Unknown', 'price': '-'}
 
@@ -1122,13 +1131,14 @@ async def check_card_with_retry(card, sites, proxies, max_retries=2):
 
 async def test_site(site, proxy):
     """Test if a Shopify site is alive by fetching its products."""
+    site_url = site['url'] if isinstance(site, dict) else site
     try:
-        info = await fetch_products(site, proxy)
+        info = await fetch_products(site_url, proxy)
         if isinstance(info, dict) and info.get('variant_id'):
-            return {'site': site, 'status': 'alive'}
-        return {'site': site, 'status': 'dead'}
+            return {'site': site_url, 'status': 'alive', 'info': info}
+        return {'site': site_url, 'status': 'dead'}
     except Exception:
-        return {'site': site, 'status': 'dead'}
+        return {'site': site_url, 'status': 'dead'}
 
 async def test_proxy(proxy):
     """Test if a proxy is working by fetching products from a known Shopify store."""
@@ -1587,14 +1597,18 @@ async def remove_site_command(event):
         await event.reply(premium_emoji("❌ <b>Access Denied</b>"), parse_mode='html')
         return
     url_to_remove = event.message.text.split(' ', 1)[1].strip()
+    if not url_to_remove.startswith('http'):
+        url_to_remove = 'https://' + url_to_remove
+    url_to_remove = url_to_remove.rstrip('/')
     current_sites = load_sites()
-    if url_to_remove not in current_sites:
+    current_urls = [s['url'] for s in current_sites]
+    if url_to_remove not in current_urls:
         await event.reply(premium_emoji(f"❌ Site not found: <code>{url_to_remove}</code>"), parse_mode='html')
         return
-    new_sites = [s for s in current_sites if s != url_to_remove]
+    new_sites = [s for s in current_sites if s['url'] != url_to_remove]
     async with aiofiles.open(SITES_FILE, 'w') as f:
         for site in new_sites:
-            await f.write(f"{site}\n")
+            await f.write(f"{site['url']}|{site.get('variant_id', '')}|{site.get('price', '-')}\n")
     await event.reply(premium_emoji(f"✅ <b>Site Removed!</b>\n\n<code>{url_to_remove}</code>"), parse_mode='html')
 
 @bot.on(events.NewMessage(pattern=r'^/addsite'))
@@ -1645,8 +1659,9 @@ async def add_site_command(event):
         return
 
     current_sites = load_sites()
-    already = [u for u in candidates if u in current_sites]
-    to_check = [u for u in candidates if u not in current_sites]
+    current_urls = [s['url'] for s in current_sites]
+    already = [u for u in candidates if u in current_urls]
+    to_check = [u for u in candidates if u not in current_urls]
 
     status_msg = await event.reply(
         premium_emoji(f"⏳ <b>Validating {len(to_check)} site(s)...</b>\n\n"
@@ -1669,7 +1684,7 @@ async def add_site_command(event):
             try:
                 info = await fetch_products(site, proxy)
                 if isinstance(info, dict) and info.get('variant_id'):
-                    added.append({'url': site, 'price': info.get('price', '-'), 'link': info.get('link', site)})
+                    added.append({'url': site, 'variant_id': info['variant_id'], 'price': info.get('price', '-'), 'link': info.get('link', site)})
                 else:
                     err = info[1] if isinstance(info, tuple) else 'Not Shopify / No Products'
                     failed.append((site, err))
@@ -1693,7 +1708,7 @@ async def add_site_command(event):
     if added:
         async with aiofiles.open(SITES_FILE, 'a') as f:
             for s in added:
-                await f.write(f"{s['url']}\n")
+                await f.write(f"{s['url']}|{s.get('variant_id', '')}|{s.get('price', '-')}\n")
 
     lines = [premium_emoji("🌐 <b>Add Sites — Result</b>\n━━━━━━━━━━━━━━━━━━\n\n")]
 
@@ -1733,7 +1748,7 @@ async def get_site_command(event):
         return
     lines = [premium_emoji(f"🌐 <b>Sites ({len(sites)})</b>\n━━━━━━━━━━━━━━━━━━\n\n")]
     for i, s in enumerate(sites, 1):
-        lines.append(f"{i}. <code>{s}</code>\n")
+        lines.append(f"{i}. <code>{s['url']}</code> · 💰 {s.get('price', '-')}\n")
     await event.reply(''.join(lines), parse_mode='html')
 
 
@@ -1912,7 +1927,12 @@ async def site_command(event):
             results = await asyncio.gather(*[test_site(site, random.choice(fresh_proxies)) for site in batch])
             for res in results:
                 if res['status'] == 'alive':
-                    alive_sites.append(res['site'])
+                    info = res.get('info', {})
+                    alive_sites.append({
+                        'url': res['site'],
+                        'variant_id': info.get('variant_id', ''),
+                        'price': info.get('price', '-')
+                    })
                 else:
                     dead_sites.append(res['site'])
             await status_msg.edit(premium_emoji(
@@ -1923,7 +1943,7 @@ async def site_command(event):
             ), parse_mode='html')
         async with aiofiles.open(SITES_FILE, 'w') as f:
             for site in alive_sites:
-                await f.write(f"{site}\n")
+                await f.write(f"{site['url']}|{site.get('variant_id', '')}|{site.get('price', '-')}\n")
         await status_msg.edit(premium_emoji(
             f"✅ <b>Site Check Complete!</b>\n\n"
             f"<b>Total:</b> {len(sites)}\n"
