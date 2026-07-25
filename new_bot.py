@@ -1278,12 +1278,30 @@ async def start(event):
         parse_mode='html'
     )
 
-@bot.on(events.NewMessage(pattern=r'^/cc\s+'))
+@bot.on(events.NewMessage(pattern=r'^/cc'))
 async def single_cc_check(event):
     user_id = event.sender_id
     if not is_premium(user_id):
         await event.reply(premium_emoji("❌ <b>Access Denied</b>\n\nOnly premium users can use this bot."), parse_mode='html')
         return
+
+    # Extract card from message — strip command and optional @botname
+    raw = event.message.text or ''
+    parts = raw.split(None, 1)
+    cc_input = parts[1].strip() if len(parts) > 1 else ''
+    # Remove @botname if present at start of cc_input
+    if cc_input.startswith('@'):
+        cc_input = cc_input.split(None, 1)[1].strip() if ' ' in cc_input else ''
+
+    if not cc_input:
+        await event.reply(premium_emoji("❌ <b>Usage:</b> <code>/cc card|mm|yy|cvv</code>"), parse_mode='html')
+        return
+
+    cards = extract_cc(cc_input)
+    if not cards:
+        await event.reply(premium_emoji("❌ Invalid CC format. Use: <code>/cc 4111111111111111|01|25|123</code>"), parse_mode='html')
+        return
+
     sites = load_sites()
     proxies = load_proxies()
     if not sites:
@@ -1292,11 +1310,7 @@ async def single_cc_check(event):
     if not proxies:
         await event.reply(premium_emoji("❌ No proxies available. Please add proxies."), parse_mode='html')
         return
-    cc_input = event.message.text.split(' ', 1)[1].strip()
-    cards = extract_cc(cc_input)
-    if not cards:
-        await event.reply(premium_emoji("❌ Invalid CC format. Use: <code>/cc card|mm|yy|cvv</code>"), parse_mode='html')
-        return
+
     card = cards[0]
     status_msg = await event.reply(
         premium_emoji(f"⏳ <b>Checking...</b>\n<code>{card}</code>"),
@@ -1304,7 +1318,11 @@ async def single_cc_check(event):
     )
     try:
         result = await check_card_with_retry(card, sites, proxies, max_retries=3)
-        brand, bin_type, level, bank, country, flag = await get_bin_info(card.split('|')[0])
+        try:
+            brand, bin_type, level, bank, country, flag = await get_bin_info(card.split('|')[0])
+        except Exception:
+            brand, bin_type, level, bank, country, flag = 'Unknown', 'Unknown', 'Unknown', 'Unknown', 'Unknown', ''
+
         if result['status'] == 'Charged':
             status_emoji = "✅"
             status_text = "𝐂𝐡𝐚𝐫𝐠𝐞𝐝"
@@ -1314,6 +1332,7 @@ async def single_cc_check(event):
         else:
             status_emoji = "❌"
             status_text = "𝐃𝐞𝐚𝐝"
+
         final_resp = (
             f"━━━━━━━━━━━━━━━━━━\n"
             f"{status_emoji} <b>{status_text}</b>\n"
