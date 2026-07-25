@@ -210,6 +210,54 @@ async def make_graphql_request_with_captcha_handling(
             await asyncio.sleep(0.1)
     return None, "Max retries exceeded", False
 
+def _pick_cheapest(products, domain):
+    min_price = float('inf')
+    min_product = None
+    for product in products:
+        if not product.get('variants'):
+            continue
+        for variant in product['variants']:
+            if not variant.get('available', True):
+                continue
+            try:
+                price = float(str(variant.get('price', '0')).replace(',', ''))
+                if price < min_price:
+                    min_price = price
+                    min_product = {
+                        'site': domain,
+                        'price': f"{price:.2f}",
+                        'variant_id': str(variant['id']),
+                        'link': f"{domain}/products/{product['handle']}"
+                    }
+            except (ValueError, TypeError, AttributeError):
+                continue
+    return min_product
+
+async def _html_fallback(domain, session, proxy):
+    """Scrape homepage for product links, then fetch each product's .json."""
+    try:
+        async with session.get(domain, proxy=proxy, allow_redirects=True) as resp:
+            if resp.status != 200:
+                return None
+            html = await resp.text()
+        handles = list(dict.fromkeys(re.findall(r'/products/([^"\'/?#\s]+)', html)))
+        for handle in handles[:5]:
+            try:
+                async with session.get(f"{domain}/products/{handle}.json", proxy=proxy) as r:
+                    if r.status != 200:
+                        continue
+                    data = await r.json(content_type=None)
+                    product = data.get('product', {})
+                    result = _pick_cheapest([product], domain)
+                    if result:
+                        result['link'] = f"{domain}/products/{handle}"
+                        return result
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
 async def fetch_products(domain, proxy_str=None):
     last_err = "Unknown error"
     proxy = parse_proxy(proxy_str) if proxy_str else None
@@ -223,58 +271,44 @@ async def fetch_products(domain, proxy_str=None):
         f"{domain}/collections/frontpage/products.json",
     ]
     for attempt in range(3):
-        for endpoint_url in endpoints:
-            try:
-                connector = aiohttp.TCPConnector(ssl=False, force_close=True)
-                timeout = aiohttp.ClientTimeout(total=TIMEOUT_PRODUCT_FETCH, connect=8, sock_read=12)
-                products = None
-                async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-                    async with session.get(endpoint_url, proxy=proxy) as resp:
-                        if resp.status != 200:
-                            last_err = f"Site Error! Status: {resp.status}"
+        try:
+            connector = aiohttp.TCPConnector(ssl=False, force_close=True)
+            timeout = aiohttp.ClientTimeout(total=TIMEOUT_PRODUCT_FETCH, connect=8, sock_read=12)
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+                for endpoint_url in endpoints:
+                    try:
+                        products = None
+                        async with session.get(endpoint_url, proxy=proxy) as resp:
+                            if resp.status != 200:
+                                last_err = f"Site Error! Status: {resp.status}"
+                                continue
+                            text = await resp.text()
+                            try:
+                                products = json.loads(text).get('products', [])
+                            except (json.JSONDecodeError, ValueError):
+                                last_err = "Invalid JSON response"
+                                continue
+                        if not products:
+                            last_err = "No Products!"
                             continue
-                        text = await resp.text()
-                        try:
-                            products = json.loads(text).get('products', [])
-                        except (json.JSONDecodeError, ValueError):
-                            last_err = "Invalid JSON response"
-                            continue
-                if products is None:
-                    continue
-                if not products:
-                    last_err = "No Products!"
-                    continue
-                min_price = float('inf')
-                min_product = None
-                for product in products:
-                    if not product.get('variants'):
+                        result = _pick_cheapest(products, domain)
+                        if result:
+                            return result
+                        last_err = "No Valid Products"
+                    except Exception:
                         continue
-                    for variant in product['variants']:
-                        if not variant.get('available', True):
-                            continue
-                        try:
-                            price = float(str(variant.get('price', '0')).replace(',', ''))
-                            if price < min_price:
-                                min_price = price
-                                min_product = {
-                                    'site': domain,
-                                    'price': f"{price:.2f}",
-                                    'variant_id': str(variant['id']),
-                                    'link': f"{domain}/products/{product['handle']}"
-                                }
-                        except (ValueError, TypeError, AttributeError):
-                            continue
-                if min_product and min_product.get('variant_id'):
-                    return min_product
-                last_err = "No Valid Products"
-            except Exception as e:
-                err = str(e).lower()
-                if 'timeout' in err:
-                    last_err = "Proxy Error: Connection timed out"
-                elif 'auth' in err or '407' in err:
-                    last_err = "Proxy Error: Authentication failed"
-                else:
-                    last_err = "Proxy Error: Could not connect"
+                # HTML fallback for headless / restricted Shopify stores
+                result = await _html_fallback(domain, session, proxy)
+                if result:
+                    return result
+        except Exception as e:
+            err = str(e).lower()
+            if 'timeout' in err:
+                last_err = "Proxy Error: Connection timed out"
+            elif 'auth' in err or '407' in err:
+                last_err = "Proxy Error: Authentication failed"
+            else:
+                last_err = "Proxy Error: Could not connect"
         await asyncio.sleep(0.2)
     return False, last_err
 
