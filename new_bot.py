@@ -221,8 +221,17 @@ async def fetch_products(domain, proxy_str=None):
                 domain = "https://" + domain
             connector = aiohttp.TCPConnector(ssl=False, force_close=True)
             timeout = aiohttp.ClientTimeout(total=TIMEOUT_PRODUCT_FETCH, connect=8, sock_read=12)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Accept': 'application/json, text/plain, */*',
+                'Accept-Language': 'en-US,en;q=0.9',
+            }
             async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-                async with session.get(f"{domain}/products.json", proxy=proxy) as resp:
+                async with session.get(f"{domain}/products.json", proxy=proxy, headers=headers) as resp:
+                    if resp.status == 429:
+                        last_err = "Rate Limited (429)"
+                        await asyncio.sleep(2 + attempt * 2)
+                        continue
                     if resp.status != 200:
                         last_err = f"Site Error! Status: {resp.status}"
                         await asyncio.sleep(0.2)
@@ -1612,6 +1621,8 @@ async def add_site_command(event):
     )
 
     proxies = load_proxies()
+    if not proxies:
+        await event.reply(premium_emoji("⚠️ <b>No proxies loaded!</b>\nAdd proxies with /addproxy for better results — sites may rate limit without a proxy."), parse_mode='html')
     semaphore = asyncio.Semaphore(20)
     added = []
     failed = []
