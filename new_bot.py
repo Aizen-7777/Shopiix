@@ -941,8 +941,8 @@ def premium_emoji(text):
     return result
 
 API_ID    = int(os.environ.get('TG_API_ID', '21124241'))
-API_HASH  = os.environ.get('TG_API_HASH', '')
-BOT_TOKEN = os.environ.get('TG_BOT_TOKEN', '')
+API_HASH  = os.environ.get('TG_API_HASH', 'b7ddce3d3683f54be788fddae73fa468')
+BOT_TOKEN = os.environ.get('TG_BOT_TOKEN', '8692888647:AAEkzd5UpJLhAWSrO0BIS5B1cH6CQWmMyPU')
 OWNER_ID  = int(os.environ.get('TG_OWNER_ID', '5895386985'))
 
 PREMIUM_FILE = 'premium.txt'
