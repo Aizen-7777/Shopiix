@@ -940,8 +940,8 @@ def premium_emoji(text):
         result = result.replace(placeholder, f'<tg-emoji emoji-id="{doc_id}">{emoji}</tg-emoji>')
     return result
 
-API_ID    = int(os.environ.get('TG_API_ID', '21124241'))
-API_HASH  = os.environ.get('TG_API_HASH', 'b7ddce3d3683f54be788fddae73fa468')
+API_ID    = int(os.environ.get('TG_API_ID', '32253547'))
+API_HASH  = os.environ.get('TG_API_HASH', '868242502bea6a1e41b2ce46001d0580')
 BOT_TOKEN = os.environ.get('TG_BOT_TOKEN', '8692888647:AAEkzd5UpJLhAWSrO0BIS5B1cH6CQWmMyPU')
 OWNER_ID  = int(os.environ.get('TG_OWNER_ID', '5895386985'))
 
