@@ -233,27 +233,68 @@ def _pick_cheapest(products, domain):
                 continue
     return min_product
 
-async def _html_fallback(domain, session, proxy):
-    """Scrape homepage for product links, then fetch each product's .json."""
+_BROWSER_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+}
+
+async def _try_product_handle(session, domain, handle, proxy):
+    """Fetch a single product by handle and return cheapest variant dict."""
     try:
-        async with session.get(domain, proxy=proxy, allow_redirects=True) as resp:
+        async with session.get(f"{domain}/products/{handle}.json", proxy=proxy, headers=_BROWSER_HEADERS) as r:
+            if r.status != 200:
+                return None
+            data = await r.json(content_type=None)
+            product = data.get('product', {})
+            result = _pick_cheapest([product], domain)
+            if result:
+                result['link'] = f"{domain}/products/{handle}"
+            return result
+    except Exception:
+        return None
+
+async def _sitemap_fallback(domain, session, proxy):
+    """Parse /sitemap.xml to find product URLs — works on virtually all Shopify stores."""
+    try:
+        sitemaps = [f"{domain}/sitemap.xml", f"{domain}/sitemap_products_1.xml"]
+        for smap in sitemaps:
+            try:
+                async with session.get(smap, proxy=proxy, headers=_BROWSER_HEADERS) as resp:
+                    if resp.status != 200:
+                        continue
+                    xml = await resp.text()
+                # Find nested product sitemap link
+                sub = re.findall(r'<loc>\s*(https?://[^<]+sitemap_products[^<]+)\s*</loc>', xml)
+                if sub:
+                    async with session.get(sub[0], proxy=proxy, headers=_BROWSER_HEADERS) as r2:
+                        if r2.status == 200:
+                            xml = await r2.text()
+                # Extract product handles from URLs
+                urls = re.findall(r'<loc>\s*(https?://[^<]+/products/([^</?#\s]+))\s*</loc>', xml)
+                handles = list(dict.fromkeys(h for _, h in urls if h))
+                for handle in handles[:10]:
+                    result = await _try_product_handle(session, domain, handle, proxy)
+                    if result:
+                        return result
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+async def _html_fallback(domain, session, proxy):
+    """Scrape homepage HTML for /products/ links (works when JS-rendering not needed)."""
+    try:
+        async with session.get(domain, proxy=proxy, allow_redirects=True, headers=_BROWSER_HEADERS) as resp:
             if resp.status != 200:
                 return None
             html = await resp.text()
         handles = list(dict.fromkeys(re.findall(r'/products/([^"\'/?#\s]+)', html)))
-        for handle in handles[:5]:
-            try:
-                async with session.get(f"{domain}/products/{handle}.json", proxy=proxy) as r:
-                    if r.status != 200:
-                        continue
-                    data = await r.json(content_type=None)
-                    product = data.get('product', {})
-                    result = _pick_cheapest([product], domain)
-                    if result:
-                        result['link'] = f"{domain}/products/{handle}"
-                        return result
-            except Exception:
-                continue
+        for handle in handles[:8]:
+            result = await _try_product_handle(session, domain, handle, proxy)
+            if result:
+                return result
     except Exception:
         pass
     return None
@@ -265,28 +306,32 @@ async def fetch_products(domain, proxy_str=None):
         return False, "Invalid proxy format"
     if not domain.startswith('http'):
         domain = "https://" + domain
-    endpoints = [
-        f"{domain}/products.json",
-        f"{domain}/collections/all/products.json",
-        f"{domain}/collections/frontpage/products.json",
+    domain = domain.rstrip('/')
+
+    json_endpoints = [
+        f"{domain}/products.json?limit=5",
+        f"{domain}/collections/all/products.json?limit=5",
+        f"{domain}/collections/frontpage/products.json?limit=5",
+        f"{domain}/collections/all.json",
     ]
-    for attempt in range(3):
+
+    for attempt in range(2):
         try:
             connector = aiohttp.TCPConnector(ssl=False, force_close=True)
-            timeout = aiohttp.ClientTimeout(total=TIMEOUT_PRODUCT_FETCH, connect=8, sock_read=12)
+            timeout = aiohttp.ClientTimeout(total=TIMEOUT_PRODUCT_FETCH, connect=10, sock_read=15)
             async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-                for endpoint_url in endpoints:
+                # 1. Standard JSON endpoints
+                for endpoint_url in json_endpoints:
                     try:
-                        products = None
-                        async with session.get(endpoint_url, proxy=proxy) as resp:
+                        async with session.get(endpoint_url, proxy=proxy, headers=_BROWSER_HEADERS) as resp:
                             if resp.status != 200:
                                 last_err = f"Site Error! Status: {resp.status}"
                                 continue
                             text = await resp.text()
                             try:
-                                products = json.loads(text).get('products', [])
+                                data = json.loads(text)
+                                products = data.get('products') or (data.get('collection', {}) or {}).get('products', [])
                             except (json.JSONDecodeError, ValueError):
-                                last_err = "Invalid JSON response"
                                 continue
                         if not products:
                             last_err = "No Products!"
@@ -297,10 +342,18 @@ async def fetch_products(domain, proxy_str=None):
                         last_err = "No Valid Products"
                     except Exception:
                         continue
-                # HTML fallback for headless / restricted Shopify stores
+
+                # 2. Sitemap-based discovery (most powerful — works on headless stores)
+                result = await _sitemap_fallback(domain, session, proxy)
+                if result:
+                    return result
+
+                # 3. HTML scrape fallback
                 result = await _html_fallback(domain, session, proxy)
                 if result:
                     return result
+
+                last_err = "Not Shopify or no products found"
         except Exception as e:
             err = str(e).lower()
             if 'timeout' in err:
@@ -309,7 +362,7 @@ async def fetch_products(domain, proxy_str=None):
                 last_err = "Proxy Error: Authentication failed"
             else:
                 last_err = "Proxy Error: Could not connect"
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.3)
     return False, last_err
 
 def extract_clean_response(message):
