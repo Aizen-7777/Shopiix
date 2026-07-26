@@ -2338,24 +2338,34 @@ async def genkey_command(event):
         return
     parts = event.message.text.split()
     count = 1
-    if len(parts) > 1:
-        try:
-            count = max(1, min(int(parts[1]), 20))
-        except ValueError:
-            count = 1
+    days = None  # None = lifetime
+    for p in parts[1:]:
+        if p.lower().endswith('d'):
+            try:
+                days = max(1, int(p[:-1]))
+            except ValueError:
+                pass
+        else:
+            try:
+                count = max(1, min(int(p), 50))
+            except ValueError:
+                pass
+    now = int(time.time())
+    expires_at = now + days * 86400 if days else None
     keys = _load_keys()
     new_keys = []
     for _ in range(count):
         key = _gen_key()
         while key in keys:
             key = _gen_key()
-        keys[key] = {'used': False, 'user_id': None, 'created': int(time.time())}
+        keys[key] = {'used': False, 'user_id': None, 'created': now, 'expires_at': expires_at}
         new_keys.append(key)
     _save_keys(keys)
     key_list = '\n'.join([f"<code>{k}</code>" for k in new_keys])
+    expiry_label = f"{days} days" if days else "Lifetime"
     await event.reply(
-        premium_emoji(f"🔑 <b>Generated {count} Key(s):</b>\n\n{key_list}\n\n"
-                      f"Users can redeem with: <code>/redeem KEY</code>"),
+        premium_emoji(f"🔑 <b>Generated {count} Key(s) — {expiry_label}</b>\n\n{key_list}\n\n"
+                      f"Redeem with: <code>/redeem KEY</code>"),
         parse_mode='html'
     )
 
@@ -2367,22 +2377,33 @@ async def redeem_command(event):
     if key_input not in keys:
         await event.reply(premium_emoji("❌ <b>Invalid key.</b> Check and try again."), parse_mode='html')
         return
-    if keys[key_input]['used']:
+    kdata = keys[key_input]
+    if kdata['used']:
         await event.reply(premium_emoji("❌ <b>Key already used.</b>"), parse_mode='html')
+        return
+    expires_at = kdata.get('expires_at')
+    if expires_at and int(time.time()) > expires_at:
+        await event.reply(premium_emoji("❌ <b>Key expired.</b>"), parse_mode='html')
         return
     if is_premium(user_id):
         await event.reply(premium_emoji("✅ <b>You already have premium access!</b>"), parse_mode='html')
         return
-    keys[key_input]['used'] = True
-    keys[key_input]['user_id'] = user_id
-    keys[key_input]['redeemed_at'] = int(time.time())
+    kdata['used'] = True
+    kdata['user_id'] = user_id
+    kdata['redeemed_at'] = int(time.time())
     _save_keys(keys)
     async with aiofiles.open(PREMIUM_FILE, 'a') as f:
         await f.write(f"{user_id}\n")
+    if expires_at:
+        from datetime import datetime as _dt
+        exp_str = _dt.utcfromtimestamp(expires_at).strftime("%d %b %Y")
+        access_label = f"Valid until <b>{exp_str}</b>"
+    else:
+        access_label = "<b>Lifetime</b> access"
     await event.reply(
-        premium_emoji("🎉 <b>Key Redeemed!</b>\n\n"
-                      "✅ You now have <b>premium access</b>.\n"
-                      "Use /cc to check cards and /chk for bulk checking."),
+        premium_emoji(f"🎉 <b>Key Redeemed!</b>\n\n"
+                      f"✅ Premium activated — {access_label}\n"
+                      f"Use /cc to check cards and /chk for bulk checking."),
         parse_mode='html'
     )
 
@@ -2401,8 +2422,14 @@ async def list_keys_command(event):
     lines = [premium_emoji(f"🔑 <b>Keys — {len(unused)} unused / {len(used)} used</b>\n\n")]
     if unused:
         lines.append(f"✅ <b>Unused ({len(unused)}):</b>\n")
-        for k, _ in unused[:20]:
-            lines.append(f"• <code>{k}</code>\n")
+        for k, v in unused[:20]:
+            exp = v.get('expires_at')
+            if exp:
+                from datetime import datetime as _dt
+                exp_str = _dt.utcfromtimestamp(exp).strftime("%d %b %Y")
+                lines.append(f"• <code>{k}</code> — expires {exp_str}\n")
+            else:
+                lines.append(f"• <code>{k}</code> — lifetime\n")
         if len(unused) > 20:
             lines.append(f"  ...and {len(unused) - 20} more\n")
         lines.append("\n")
