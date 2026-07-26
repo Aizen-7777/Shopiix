@@ -1138,7 +1138,9 @@ OWNER_ID  = int(os.environ.get('TG_OWNER_ID', '5895386985'))
 
 PREMIUM_FILE = 'premium.txt'
 SITES_FILE = 'sites.txt'
-PROXY_FILE = 'proxy.txt'
+
+def get_proxy_file(user_id):
+    return f'proxy_{user_id}.txt'
 
 bot = TelegramClient('shopiix_bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 active_sessions = {}
@@ -1192,8 +1194,27 @@ def load_sites():
         sites.append({'url': url, 'variant_id': variant_id, 'price': price})
     return sites
 
-def load_proxies():
-    return get_file_lines(PROXY_FILE)
+def load_proxies(user_id):
+    return get_file_lines(get_proxy_file(user_id))
+
+def is_owner(user_id):
+    return user_id == OWNER_ID
+
+_dead_sites_cache = set()
+
+async def auto_remove_dead_site(url):
+    if url in _dead_sites_cache:
+        return
+    _dead_sites_cache.add(url)
+    try:
+        sites = load_sites()
+        new_sites = [s for s in sites if s['url'].rstrip('/') != url.rstrip('/')]
+        if len(new_sites) < len(sites):
+            async with aiofiles.open(SITES_FILE, 'w') as f:
+                for site in new_sites:
+                    await f.write(f"{site['url']}|{site.get('variant_id', '')}|{site.get('price', '-')}\n")
+    except Exception:
+        pass
 
 def is_premium(user_id):
     if user_id == OWNER_ID:
@@ -1260,6 +1281,7 @@ async def check_card_embedded(card, site, proxy):
         success, message, gateway, price, currency = await process_card(cc, mes, ano, cvv, site_url, variant_id=variant_id, proxy_str=proxy)
         status = classify_result(success, message)
         if status == 'SiteError':
+            asyncio.create_task(auto_remove_dead_site(site_url))
             return {'status': 'Site Error', 'message': message, 'card': card, 'retry': True, 'gateway': gateway, 'price': price}
         clean_msg = message.replace("_", " ").title()
         price_display = f"{float(price):.2f} {currency}" if price and price != "0.00" else '-'
@@ -1514,12 +1536,12 @@ async def single_cc_check(event):
         return
 
     sites = load_sites()
-    proxies = load_proxies()
+    proxies = load_proxies(user_id)
     if not sites:
         await event.reply(premium_emoji("❌ No sites available. Please contact admin."), parse_mode='html')
         return
     if not proxies:
-        await event.reply(premium_emoji("❌ No proxies available. Please add proxies."), parse_mode='html')
+        await event.reply(premium_emoji("❌ No proxies available. Please add proxies with /addproxy."), parse_mode='html')
         return
 
     card = cards[0]
@@ -1626,12 +1648,12 @@ async def remove_single_proxy(event):
         await event.reply(premium_emoji("❌ <b>Access Denied</b>"), parse_mode='html')
         return
     proxy_to_remove = event.message.text.split(' ', 1)[1].strip()
-    current_proxies = load_proxies()
+    current_proxies = load_proxies(user_id)
     if proxy_to_remove not in current_proxies:
         await event.reply(premium_emoji(f"❌ Proxy not found: <code>{proxy_to_remove}</code>"), parse_mode='html')
         return
     new_proxies = [p for p in current_proxies if p != proxy_to_remove]
-    async with aiofiles.open(PROXY_FILE, 'w') as f:
+    async with aiofiles.open(get_proxy_file(user_id), 'w') as f:
         for proxy in new_proxies:
             await f.write(f"{proxy}\n")
     await event.reply(premium_emoji(f"✅ <b>Proxy Removed!</b>\n\n<code>{proxy_to_remove}</code>"), parse_mode='html')
@@ -1648,9 +1670,9 @@ async def remove_proxy_by_index(event):
     except ValueError:
         await event.reply(premium_emoji("❌ Invalid indices. Use numbers separated by commas."), parse_mode='html')
         return
-    current_proxies = load_proxies()
+    current_proxies = load_proxies(user_id)
     if not current_proxies:
-        await event.reply(premium_emoji("❌ No proxies in proxy.txt"), parse_mode='html')
+        await event.reply(premium_emoji("❌ You have no proxies added."), parse_mode='html')
         return
     removed = []
     new_proxies = []
@@ -1662,7 +1684,7 @@ async def remove_proxy_by_index(event):
     if not removed:
         await event.reply(premium_emoji("❌ No valid indices found."), parse_mode='html')
         return
-    async with aiofiles.open(PROXY_FILE, 'w') as f:
+    async with aiofiles.open(get_proxy_file(user_id), 'w') as f:
         for proxy in new_proxies:
             await f.write(f"{proxy}\n")
     removed_list = "\n".join(removed[:10]) + ("..." if len(removed) > 10 else "")
@@ -1674,10 +1696,10 @@ async def clear_all_proxies(event):
     if not is_premium(user_id):
         await event.reply(premium_emoji("❌ <b>Access Denied</b>"), parse_mode='html')
         return
-    current_proxies = load_proxies()
+    current_proxies = load_proxies(user_id)
     count = len(current_proxies)
     if count == 0:
-        await event.reply(premium_emoji("❌ <code>proxy.txt</code> is already empty."), parse_mode='html')
+        await event.reply(premium_emoji("❌ You have no proxies to clear."), parse_mode='html')
         return
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_filename = f"proxy_backup_{user_id}_{timestamp}.txt"
@@ -1693,9 +1715,9 @@ async def clear_all_proxies(event):
     except Exception as e:
         await event.reply(premium_emoji(f"❌ Error creating backup: {e}"), parse_mode='html')
         return
-    async with aiofiles.open(PROXY_FILE, 'w') as f:
+    async with aiofiles.open(get_proxy_file(user_id), 'w') as f:
         await f.write("")
-    await event.reply(premium_emoji(f"✅ <b>Cleared all {count} proxies!</b>\n\n<code>proxy.txt</code> is now empty."), parse_mode='html')
+    await event.reply(premium_emoji(f"✅ <b>Cleared all {count} proxies!</b>"), parse_mode='html')
 
 @bot.on(events.NewMessage(pattern=r'^/getproxy$'))
 async def get_all_proxies(event):
@@ -1703,20 +1725,20 @@ async def get_all_proxies(event):
     if not is_premium(user_id):
         await event.reply(premium_emoji("❌ <b>Access Denied</b>"), parse_mode='html')
         return
-    current_proxies = load_proxies()
+    current_proxies = load_proxies(user_id)
     if not current_proxies:
-        await event.reply(premium_emoji("❌ No proxies in <code>proxy.txt</code>"), parse_mode='html')
+        await event.reply(premium_emoji("❌ You have no proxies. Use /addproxy to add some."), parse_mode='html')
         return
     if len(current_proxies) <= 50:
         proxy_list = "\n".join([f"{i+1}. <code>{p}</code>" for i, p in enumerate(current_proxies)])
-        await event.reply(premium_emoji(f"<b>📋 All Proxies ({len(current_proxies)}):</b>\n\n{proxy_list}"), parse_mode='html')
+        await event.reply(premium_emoji(f"<b>📋 Your Proxies ({len(current_proxies)}):</b>\n\n{proxy_list}"), parse_mode='html')
     else:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"proxies_{user_id}_{timestamp}.txt"
         async with aiofiles.open(filename, 'w') as f:
             for i, proxy in enumerate(current_proxies):
                 await f.write(f"{i+1}. {proxy}\n")
-        await event.reply(premium_emoji(f"<b>📋 All Proxies ({len(current_proxies)}):</b>\n\nFile attached below."), file=filename, parse_mode='html')
+        await event.reply(premium_emoji(f"<b>📋 Your Proxies ({len(current_proxies)}):</b>\n\nFile attached below."), file=filename, parse_mode='html')
         try:
             os.remove(filename)
         except Exception:
@@ -1752,7 +1774,7 @@ async def add_proxy_command(event):
         )
         return
 
-    current_proxies = load_proxies()
+    current_proxies = load_proxies(user_id)
     already = [p for p in proxies_to_add if p in current_proxies]
     to_check = list(dict.fromkeys([p for p in proxies_to_add if p not in current_proxies]))
 
@@ -1796,7 +1818,7 @@ async def add_proxy_command(event):
     await asyncio.gather(*[validate_proxy(p) for p in to_check])
 
     if live:
-        async with aiofiles.open(PROXY_FILE, 'a') as f:
+        async with aiofiles.open(get_proxy_file(user_id), 'a') as f:
             for p in live:
                 await f.write(f"{p}\n")
 
@@ -1816,15 +1838,15 @@ async def add_proxy_command(event):
         for p in already:
             lines.append(f"• <code>{p}</code>\n")
         lines.append("\n")
-    total = len(load_proxies())
-    lines.append(f"━━━━━━━━━━━━━━━━━━\n📦 <b>Total proxies:</b> {total}")
+    total = len(load_proxies(user_id))
+    lines.append(f"━━━━━━━━━━━━━━━━━━\n📦 <b>Your total proxies:</b> {total}")
     await status_msg.edit(''.join(lines), parse_mode='html')
 
 @bot.on(events.NewMessage(pattern=r'^/rm\s+'))
 async def remove_site_command(event):
     user_id = event.sender_id
-    if not is_premium(user_id):
-        await event.reply(premium_emoji("❌ <b>Access Denied</b>"), parse_mode='html')
+    if not is_owner(user_id):
+        await event.reply(premium_emoji("❌ <b>Owner only command.</b>"), parse_mode='html')
         return
     url_to_remove = event.message.text.split(' ', 1)[1].strip()
     if not url_to_remove.startswith('http'):
@@ -1844,7 +1866,7 @@ async def remove_site_command(event):
 @bot.on(events.NewMessage(pattern=r'^/addsite'))
 async def add_site_command(event):
     user_id = event.sender_id
-    if not is_premium(user_id):
+    if not is_owner(user_id):
         await event.reply(premium_emoji("❌ <b>Access Denied</b>"), parse_mode='html')
         return
 
@@ -1900,7 +1922,7 @@ async def add_site_command(event):
         parse_mode='html'
     )
 
-    proxies = load_proxies()
+    proxies = load_proxies(user_id)
     semaphore = asyncio.Semaphore(20)
     added = []
     failed = []
@@ -1969,8 +1991,8 @@ async def add_site_command(event):
 @bot.on(events.NewMessage(pattern='/getsite'))
 async def get_site_command(event):
     user_id = event.sender_id
-    if not is_premium(user_id):
-        await event.reply(premium_emoji("❌ <b>Access Denied</b>"), parse_mode='html')
+    if not is_owner(user_id):
+        await event.reply(premium_emoji("❌ <b>Owner only command.</b>"), parse_mode='html')
         return
     sites = load_sites()
     if not sites:
@@ -2012,8 +2034,8 @@ async def check_command(event):
     if not load_sites():
         await event.reply(premium_emoji("❌ No sites available. Please contact admin."), parse_mode='html')
         return
-    if not load_proxies():
-        await event.reply(premium_emoji("❌ No proxies available. Please add proxies."), parse_mode='html')
+    if not load_proxies(user_id):
+        await event.reply(premium_emoji("❌ No proxies available. Please add proxies with /addproxy."), parse_mode='html')
         return
     # Download and parse file first
     wait_msg = await event.reply(premium_emoji("⏳ Reading file..."), parse_mode='html')
@@ -2121,7 +2143,7 @@ async def _run_bulk_check(user_id, event, pending):
                     card = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
-                current_proxies = load_proxies()
+                current_proxies = load_proxies(user_id)
                 if not filtered_sites or not current_proxies:
                     break
                 res = await check_card_with_retry(card, filtered_sites, current_proxies, max_retries=1)
@@ -2173,9 +2195,9 @@ async def proxy_command(event):
     if not is_premium(user_id):
         await event.reply(premium_emoji("❌ <b>Access Denied</b>"), parse_mode='html')
         return
-    proxies = load_proxies()
+    proxies = load_proxies(user_id)
     if not proxies:
-        await event.reply(premium_emoji("❌ <code>proxy.txt</code> is empty."), parse_mode='html')
+        await event.reply(premium_emoji("❌ You have no proxies. Use /addproxy to add some."), parse_mode='html')
         return
     status_msg = await event.reply(premium_emoji(f"🔥 Checking {len(proxies)} proxies..."), parse_mode='html')
     alive_proxies = []
@@ -2197,7 +2219,7 @@ async def proxy_command(event):
                 f"<b>Alive:</b> {len(alive_proxies)}\n"
                 f"<b>Dead:</b> {len(dead_proxies)}"
             ), parse_mode='html')
-        async with aiofiles.open(PROXY_FILE, 'w') as f:
+        async with aiofiles.open(get_proxy_file(user_id), 'w') as f:
             for proxy in alive_proxies:
                 await f.write(f"{proxy}\n")
         await status_msg.edit(premium_emoji(
@@ -2205,7 +2227,7 @@ async def proxy_command(event):
             f"<b>Total:</b> {len(proxies)}\n"
             f"<b>Alive:</b> {len(alive_proxies)}\n"
             f"<b>Removed:</b> {len(dead_proxies)}\n\n"
-            f"<code>proxy.txt</code> updated."
+            f"Your proxy list updated."
         ), parse_mode='html')
     except Exception as e:
         await status_msg.edit(premium_emoji(f"❌ Error during proxy check: {e}"), parse_mode='html')
@@ -2213,16 +2235,16 @@ async def proxy_command(event):
 @bot.on(events.NewMessage(pattern='/site'))
 async def site_command(event):
     user_id = event.sender_id
-    if not is_premium(user_id):
-        await event.reply(premium_emoji("❌ <b>Access Denied</b>"), parse_mode='html')
+    if not is_owner(user_id):
+        await event.reply(premium_emoji("❌ <b>Owner only command.</b>"), parse_mode='html')
         return
     sites = load_sites()
     if not sites:
         await event.reply(premium_emoji("❌ <code>sites.txt</code> is empty."), parse_mode='html')
         return
-    proxies = load_proxies()
+    proxies = load_proxies(user_id)
     if not proxies:
-        await event.reply(premium_emoji("❌ No proxies available."), parse_mode='html')
+        await event.reply(premium_emoji("❌ No proxies available. Add proxies with /addproxy."), parse_mode='html')
         return
     status_msg = await event.reply(premium_emoji(f"🔥 Checking {len(sites)} sites..."), parse_mode='html')
     alive_sites = []
@@ -2231,7 +2253,7 @@ async def site_command(event):
     try:
         for i in range(0, len(sites), batch_size):
             batch = sites[i:i + batch_size]
-            fresh_proxies = load_proxies() or proxies
+            fresh_proxies = load_proxies(user_id) or proxies
             results = await asyncio.gather(*[test_site(site, random.choice(fresh_proxies)) for site in batch])
             for res in results:
                 if res['status'] == 'alive':
