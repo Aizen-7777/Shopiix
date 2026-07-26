@@ -240,9 +240,11 @@ _BROWSER_HEADERS = {
 }
 
 async def _try_product_handle(session, domain, handle, proxy):
-    """Fetch a single product by handle and return cheapest variant dict."""
+    """Fetch single product by handle — returns cheapest variant dict or None."""
     try:
-        async with session.get(f"{domain}/products/{handle}.json", proxy=proxy, headers=_BROWSER_HEADERS) as r:
+        async with session.get(
+            f"{domain}/products/{handle}.json", proxy=proxy, headers=_BROWSER_HEADERS
+        ) as r:
             if r.status != 200:
                 return None
             data = await r.json(content_type=None)
@@ -254,8 +256,57 @@ async def _try_product_handle(session, domain, handle, proxy):
     except Exception:
         return None
 
+async def _search_fallback(domain, session, proxy):
+    """Shopify search/suggest API — almost never blocked, works on headless stores."""
+    endpoints = [
+        f"{domain}/search/suggest.json?q=*&resources[type]=product&resources[limit]=5",
+        f"{domain}/search.json?q=*&type=product",
+    ]
+    for url in endpoints:
+        try:
+            async with session.get(url, proxy=proxy, headers=_BROWSER_HEADERS) as resp:
+                if resp.status != 200:
+                    continue
+                data = await resp.json(content_type=None)
+            products = (
+                data.get('resources', {}).get('results', {}).get('products', [])
+                or data.get('products', [])
+            )
+            if not products:
+                continue
+            # suggest API returns variants inline
+            for product in products:
+                variants = product.get('variants', [])
+                for v in variants:
+                    vid = v.get('id') or v.get('variant_id')
+                    price_raw = v.get('price', '0')
+                    if not vid:
+                        continue
+                    try:
+                        price = float(str(price_raw).replace(',', ''))
+                        if price > 10000:   # cents → dollars
+                            price /= 100
+                    except Exception:
+                        price = 1.00
+                    return {
+                        'site': domain,
+                        'price': f"{price:.2f}",
+                        'variant_id': str(vid),
+                        'link': f"{domain}/products/{product.get('handle', '')}"
+                    }
+            # fallback: use handle to get full product JSON
+            for product in products:
+                handle = product.get('handle', '')
+                if handle:
+                    result = await _try_product_handle(session, domain, handle, proxy)
+                    if result:
+                        return result
+        except Exception:
+            continue
+    return None
+
 async def _sitemap_fallback(domain, session, proxy):
-    """Parse /sitemap.xml to find product URLs — works on virtually all Shopify stores."""
+    """Parse sitemap.xml for product handles — covers most headless Shopify stores."""
     try:
         sitemaps = [f"{domain}/sitemap.xml", f"{domain}/sitemap_products_1.xml"]
         for smap in sitemaps:
@@ -264,16 +315,19 @@ async def _sitemap_fallback(domain, session, proxy):
                     if resp.status != 200:
                         continue
                     xml = await resp.text()
-                # Find nested product sitemap link
-                sub = re.findall(r'<loc>\s*(https?://[^<]+sitemap_products[^<]+)\s*</loc>', xml)
+                # Follow nested product sitemap if present
+                sub = re.findall(r'<loc>\s*(https?://[^<]+sitemap_products[^<]*)\s*</loc>', xml)
                 if sub:
-                    async with session.get(sub[0], proxy=proxy, headers=_BROWSER_HEADERS) as r2:
-                        if r2.status == 200:
-                            xml = await r2.text()
-                # Extract product handles from URLs
-                urls = re.findall(r'<loc>\s*(https?://[^<]+/products/([^</?#\s]+))\s*</loc>', xml)
-                handles = list(dict.fromkeys(h for _, h in urls if h))
-                for handle in handles[:10]:
+                    try:
+                        async with session.get(sub[0], proxy=proxy, headers=_BROWSER_HEADERS) as r2:
+                            if r2.status == 200:
+                                xml = await r2.text()
+                    except Exception:
+                        pass
+                # Extract product handles
+                urls = re.findall(r'<loc>\s*https?://[^<]+/products/([^</?#\s]+)\s*</loc>', xml)
+                handles = list(dict.fromkeys(h for h in urls if h))
+                for handle in handles[:15]:
                     result = await _try_product_handle(session, domain, handle, proxy)
                     if result:
                         return result
@@ -283,20 +337,53 @@ async def _sitemap_fallback(domain, session, proxy):
         pass
     return None
 
-async def _html_fallback(domain, session, proxy):
-    """Scrape homepage HTML for /products/ links (works when JS-rendering not needed)."""
-    try:
-        async with session.get(domain, proxy=proxy, allow_redirects=True, headers=_BROWSER_HEADERS) as resp:
-            if resp.status != 200:
-                return None
-            html = await resp.text()
-        handles = list(dict.fromkeys(re.findall(r'/products/([^"\'/?#\s]+)', html)))
-        for handle in handles[:8]:
-            result = await _try_product_handle(session, domain, handle, proxy)
-            if result:
-                return result
-    except Exception:
-        pass
+async def _nextjs_fallback(domain, session, proxy):
+    """Parse __NEXT_DATA__ / embedded JSON from Next.js headless storefronts."""
+    pages = [domain, f"{domain}/shop", f"{domain}/collections/all", f"{domain}/products"]
+    for page_url in pages:
+        try:
+            async with session.get(
+                page_url, proxy=proxy, headers=_BROWSER_HEADERS, allow_redirects=True
+            ) as resp:
+                if resp.status != 200:
+                    continue
+                html = await resp.text()
+
+            # 1. __NEXT_DATA__ (Next.js stores like makeship)
+            m = re.search(r'<script id="__NEXT_DATA__"[^>]*>([\s\S]+?)</script>', html)
+            if m:
+                try:
+                    nd_text = m.group(1)
+                    # Find variant structures: "variants":[{"id":XXXXXXXX
+                    v_ids = re.findall(r'"variants"\s*:\s*\[[\s\S]{0,200}?"id"\s*:\s*(\d{7,})', nd_text)
+                    p_vals = re.findall(r'"price"\s*:\s*"?(\d+\.?\d*)"?', nd_text)
+                    if v_ids:
+                        price = 1.00
+                        if p_vals:
+                            try:
+                                price = float(p_vals[0])
+                                if price > 10000:
+                                    price /= 100
+                            except Exception:
+                                pass
+                        return {'site': domain, 'price': f"{price:.2f}",
+                                'variant_id': v_ids[0], 'link': page_url}
+                except Exception:
+                    pass
+
+            # 2. Plain variant_id in any script tag
+            v_ids = re.findall(r'"variant_id"\s*:\s*(\d{7,})', html)
+            if v_ids:
+                return {'site': domain, 'price': '1.00', 'variant_id': v_ids[0], 'link': page_url}
+
+            # 3. Product handles found in HTML → try .json
+            handles = list(dict.fromkeys(re.findall(r'/products/([^"\'/?#\s]{3,})', html)))
+            for handle in handles[:8]:
+                result = await _try_product_handle(session, domain, handle, proxy)
+                if result:
+                    return result
+        except Exception:
+            continue
     return None
 
 async def fetch_products(domain, proxy_str=None):
@@ -320,48 +407,50 @@ async def fetch_products(domain, proxy_str=None):
             connector = aiohttp.TCPConnector(ssl=False, force_close=True)
             timeout = aiohttp.ClientTimeout(total=TIMEOUT_PRODUCT_FETCH, connect=10, sock_read=15)
             async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-                # 1. Standard JSON endpoints
+
+                # Layer 1: Standard JSON endpoints
                 for endpoint_url in json_endpoints:
                     try:
                         async with session.get(endpoint_url, proxy=proxy, headers=_BROWSER_HEADERS) as resp:
                             if resp.status != 200:
-                                last_err = f"Site Error! Status: {resp.status}"
+                                last_err = f"Status {resp.status}"
                                 continue
                             text = await resp.text()
-                            try:
-                                data = json.loads(text)
-                                products = data.get('products') or (data.get('collection', {}) or {}).get('products', [])
-                            except (json.JSONDecodeError, ValueError):
-                                continue
+                            data = json.loads(text)
+                            products = (data.get('products')
+                                        or (data.get('collection') or {}).get('products', []))
                         if not products:
-                            last_err = "No Products!"
                             continue
                         result = _pick_cheapest(products, domain)
                         if result:
                             return result
-                        last_err = "No Valid Products"
                     except Exception:
                         continue
 
-                # 2. Sitemap-based discovery (most powerful — works on headless stores)
+                # Layer 2: Shopify search/suggest API
+                result = await _search_fallback(domain, session, proxy)
+                if result:
+                    return result
+
+                # Layer 3: Sitemap → product handle → .json
                 result = await _sitemap_fallback(domain, session, proxy)
                 if result:
                     return result
 
-                # 3. HTML scrape fallback
-                result = await _html_fallback(domain, session, proxy)
+                # Layer 4: Next.js __NEXT_DATA__ + HTML scrape
+                result = await _nextjs_fallback(domain, session, proxy)
                 if result:
                     return result
 
-                last_err = "Not Shopify or no products found"
+                last_err = "No products found (site may block all product APIs)"
         except Exception as e:
             err = str(e).lower()
             if 'timeout' in err:
-                last_err = "Proxy Error: Connection timed out"
+                last_err = "Connection timed out"
             elif 'auth' in err or '407' in err:
-                last_err = "Proxy Error: Authentication failed"
+                last_err = "Proxy auth failed"
             else:
-                last_err = "Proxy Error: Could not connect"
+                last_err = "Could not connect"
         await asyncio.sleep(0.3)
     return False, last_err
 
