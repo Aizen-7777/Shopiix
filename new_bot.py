@@ -60,9 +60,8 @@ _LIVE_CODES = (
     'incorrect_cvc', 'incorrect_zip', 'invalid_cvc',
     'incorrect_number', 'stolen_card', 'lost_card',
     'pickup_card', 'restricted_card', 'security_violation',
-    'transaction_not_allowed', 'card_not_supported',
-    'mismatched_bill', 'otp_required', 'payment_failed',
-    'card_declined', 'do_not_try_again', 'cvv2_mismatch',
+    'transaction_not_allowed', 'otp_required',
+    'cvv2_mismatch',
 )
 
 # =========== UTILITY FUNCTIONS ===============
@@ -1245,8 +1244,7 @@ def classify_result(success, message):
         return 'Charged'
     if any(code in msg_lower for code in _LIVE_CODES):
         return 'Live'
-    # Any other success=True response is a bank decline — still live card
-    return 'Live'
+    return 'Dead'
 
 async def check_card_embedded(card, site, proxy):
     """Wrapper around process_card returning same dict format as old check_card."""
