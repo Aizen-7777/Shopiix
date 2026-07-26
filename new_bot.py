@@ -1297,15 +1297,43 @@ async def test_site(site, proxy):
         return {'site': site_url, 'status': 'dead'}
 
 async def test_proxy(proxy):
-    """Test if a proxy is working by fetching products from a known Shopify store."""
-    test_site_url = "https://riverbendhomedev.myshopify.com"
+    """Test if a proxy is working — fast connectivity check, then Shopify fallback."""
+    parsed = parse_proxy(proxy)
+    if not parsed:
+        return {'proxy': proxy, 'status': 'dead'}
+    connector = aiohttp.TCPConnector(ssl=False, force_close=True)
+    timeout = aiohttp.ClientTimeout(total=15, connect=8, sock_read=10)
+    # Fast connectivity test sites
+    test_urls = [
+        "https://api.ipify.org?format=json",
+        "https://httpbin.org/ip",
+        "https://ifconfig.me/ip",
+    ]
     try:
-        info = await fetch_products(test_site_url, proxy)
-        if isinstance(info, dict) and info.get('variant_id'):
-            return {'proxy': proxy, 'status': 'alive'}
-        return {'proxy': proxy, 'status': 'dead'}
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            for url in test_urls:
+                try:
+                    async with session.get(url, proxy=parsed, headers=_BROWSER_HEADERS) as resp:
+                        if resp.status == 200:
+                            return {'proxy': proxy, 'status': 'alive'}
+                except Exception:
+                    continue
+            # Fallback: try a known Shopify products.json directly
+            shopify_tests = [
+                "https://allbirds.com/products.json?limit=1",
+                "https://gymshark.com/products.json?limit=1",
+                "https://kith.com/products.json?limit=1",
+            ]
+            for url in shopify_tests:
+                try:
+                    async with session.get(url, proxy=parsed, headers=_JSON_HEADERS) as resp:
+                        if resp.status in (200, 301, 302, 403):
+                            return {'proxy': proxy, 'status': 'alive'}
+                except Exception:
+                    continue
     except Exception:
-        return {'proxy': proxy, 'status': 'dead'}
+        pass
+    return {'proxy': proxy, 'status': 'dead'}
 
 async def send_realtime_hit(user_id, result, hit_type, username):
     emoji = "✅" if hit_type == "Charged" else "🔥"
