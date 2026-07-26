@@ -1141,6 +1141,7 @@ PROXY_FILE = 'proxy.txt'
 
 bot = TelegramClient('shopiix_bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 active_sessions = {}
+pending_chk_sessions = {}  # user_id -> {cards, file_reply_id, status_msg_id, price_filter, selected}
 
 _DEAD_INDICATORS = (
     'receipt id is empty', 'handle is empty', 'product id is empty',
@@ -1359,26 +1360,52 @@ async def send_realtime_hit(user_id, result, hit_type, username):
     except Exception:
         pass
 
+def filter_sites_by_price(sites, price_range):
+    """Filter sites by stored price range tuple (min, max). Falls back to all if none match."""
+    if not price_range:
+        return sites
+    min_p, max_p = price_range
+    filtered = []
+    for s in sites:
+        try:
+            p = float(str(s.get('price', '0')).replace('$', '').replace(',', '').strip())
+            if min_p <= p <= max_p:
+                filtered.append(s)
+        except (ValueError, TypeError):
+            continue
+    return filtered if filtered else sites
+
 async def update_progress(user_id, message_id, results, current_attempt_count):
     elapsed = int(time.time() - results['start_time'])
     hours = elapsed // 3600
     minutes = (elapsed % 3600) // 60
     seconds = elapsed % 60
-    gateway = results['charged'][0]['gateway'] if results['charged'] else (results['live'][0]['gateway'] if results['live'] else 'Unknown')
+    last_card_raw = results.get('last_card', '')
+    if last_card_raw:
+        parts = last_card_raw.split('|')
+        num = parts[0]
+        masked = num[:6] + '*' * (len(num) - 10) + num[-4:] if len(num) > 10 else num
+        last_card_display = '|'.join([masked] + parts[1:]) if len(parts) > 1 else masked
+    else:
+        last_card_display = '—'
+    last_resp = results.get('last_response', '—')
+    if len(last_resp) > 30:
+        last_resp = last_resp[:28] + '...'
     progress_text = (
         f"<b>⚡💳 ㅤ#Shopiix  💳⚡</b>\n"
         f"<b>─────────────────</b>\n"
-        f"<b>⚡💠 𝐏𝐫𝐨𝐠𝐫𝐞𝐬𝐬</b>\n"
-        f"<blockquote>💳 Total: {results['total']} | ✅ Charged: {len(results['charged'])} | 🔥 Live: {len(results['live'])} | ❌ Dead: {len(results['dead'])}</blockquote>\n"
-        f"<blockquote>📊 Checked: {current_attempt_count}/{results['total']}</blockquote>\n"
-        f"<blockquote>🌐 𝐆𝐚𝐭𝐞𝐰𝐚𝐲: 🔥 {gateway}</blockquote>\n"
-        f"<blockquote>⏱️ Time: {hours}h {minutes}m {seconds}s</blockquote>\n"
+        f"💳 <b>Card</b> → <code>{last_card_display}</code>\n"
+        f"📝 <b>Response</b> → <i>{last_resp}</i>\n"
+        f"<b>─────────────────</b>\n"
+        f"💎 <b>Charge</b> → [{len(results['charged'])}]\n"
+        f"🔥 <b>Approve</b> → [{len(results['live'])}]\n"
+        f"❌ <b>Decline</b> → [{len(results['dead'])}]\n"
+        f"<b>─────────────────</b>\n"
+        f"✅ <b>Progress</b> → [{current_attempt_count}/{results['total']}]\n"
+        f"⏱️ <b>Time</b> → {hours}h {minutes}m {seconds}s\n"
         f"<b>─────────────────</b>"
     )
-    buttons = [
-        [Button.inline("⏸️ Pause", b"pause"), Button.inline("▶️ Resume", b"resume")],
-        [Button.inline("🛑 Stop", b"stop")]
-    ]
+    buttons = [[Button.inline("🛑 Stop", b"stop")]]
     try:
         await bot.edit_message(user_id, message_id, premium_emoji(progress_text), buttons=buttons, parse_mode='html')
     except Exception:
@@ -1955,6 +1982,15 @@ async def get_site_command(event):
     await event.reply(''.join(lines), parse_mode='html')
 
 
+def _price_filter_buttons(selected):
+    """Build inline keyboard for price filter. selected: '10_20' | '30_40' | None"""
+    b1 = f"$ $10-$20 {'✅' if selected == '10_20' else ''}"
+    b2 = f"$ $30-$40 {'✅' if selected == '30_40' else ''}"
+    return [
+        [Button.inline(b1.strip(), b"pf_10_20"), Button.inline(b2.strip(), b"pf_30_40")],
+        [Button.inline("✅ DONE — Start Checking", b"pf_done")],
+    ]
+
 @bot.on(events.NewMessage(pattern=r'^/chk(\s|$)'))
 async def check_command(event):
     user_id = event.sender_id
@@ -1979,49 +2015,119 @@ async def check_command(event):
     if not load_proxies():
         await event.reply(premium_emoji("❌ No proxies available. Please add proxies."), parse_mode='html')
         return
-    status_msg = await event.reply(premium_emoji("⏳ Processing your file..."), parse_mode='html')
+    # Download and parse file first
+    wait_msg = await event.reply(premium_emoji("⏳ Reading file..."), parse_mode='html')
     file_path = await reply_msg.download_media()
     async with aiofiles.open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
         content = await f.read()
     cards = extract_cc(content)
+    os.remove(file_path)
     if not cards:
-        await status_msg.edit(premium_emoji("❌ No valid cards found in file."), parse_mode='html')
-        os.remove(file_path)
+        await wait_msg.edit(premium_emoji("❌ No valid cards found in file."), parse_mode='html')
         return
     if len(cards) > 500000:
         cards = cards[:500000]
-    os.remove(file_path)
+    # Store pending state and show price filter
+    pending_chk_sessions[user_id] = {
+        'cards': cards,
+        'username': username,
+        'wait_msg_id': wait_msg.id,
+        'selected': None,
+    }
+    filter_text = (
+        f"💳 <b>Found {len(cards)} cards</b>\n\n"
+        f"💰 Choose the price range to check under,\n"
+        f"then tap <b>✅ DONE</b> to start."
+    )
+    await wait_msg.edit(premium_emoji(filter_text), buttons=_price_filter_buttons(None), parse_mode='html')
+
+@bot.on(events.CallbackQuery(pattern=b"pf_"))
+async def price_filter_callback(event):
+    user_id = event.sender_id
+    data = event.data.decode()
+    pending = pending_chk_sessions.get(user_id)
+    if not pending:
+        await event.answer("Session expired. Please run /chk again.")
+        return
+    if data == "pf_10_20":
+        pending['selected'] = '10_20'
+        await event.answer("$10-$20 selected ✅")
+        filter_text = (
+            f"💳 <b>Found {len(pending['cards'])} cards</b>\n\n"
+            f"💰 Choose the price range to check under,\n"
+            f"then tap <b>✅ DONE</b> to start."
+        )
+        try:
+            await event.edit(premium_emoji(filter_text), buttons=_price_filter_buttons('10_20'), parse_mode='html')
+        except Exception:
+            pass
+    elif data == "pf_30_40":
+        pending['selected'] = '30_40'
+        await event.answer("$30-$40 selected ✅")
+        filter_text = (
+            f"💳 <b>Found {len(pending['cards'])} cards</b>\n\n"
+            f"💰 Choose the price range to check under,\n"
+            f"then tap <b>✅ DONE</b> to start."
+        )
+        try:
+            await event.edit(premium_emoji(filter_text), buttons=_price_filter_buttons('30_40'), parse_mode='html')
+        except Exception:
+            pass
+    elif data == "pf_done":
+        if not pending.get('selected'):
+            await event.answer("⚠️ Please select a price range first!", alert=True)
+            return
+        await event.answer("Starting check...")
+        asyncio.create_task(_run_bulk_check(user_id, event, pending))
+        del pending_chk_sessions[user_id]
+
+async def _run_bulk_check(user_id, event, pending):
+    cards = pending['cards']
+    username = pending['username']
+    selected = pending['selected']
+    price_range = (10, 20) if selected == '10_20' else (30, 40)
+    all_sites = load_sites()
+    filtered_sites = filter_sites_by_price(all_sites, price_range)
     total_cards = len(cards)
-    await status_msg.edit(premium_emoji(f"⚡ Starting check for {total_cards} cards..."), parse_mode='html')
+    range_label = "$10-$20" if selected == '10_20' else "$30-$40"
+    status_msg = await bot.send_message(
+        user_id,
+        premium_emoji(
+            f"⚡ Starting check for <b>{total_cards}</b> cards\n"
+            f"💰 Price filter: <b>{range_label}</b> · 🌐 Sites: <b>{len(filtered_sites)}</b>"
+        ),
+        parse_mode='html'
+    )
     session_key = f"{user_id}_{status_msg.id}"
     active_sessions[session_key] = {'paused': False}
-    all_results = {'charged': [], 'live': [], 'dead': [], 'total': total_cards, 'checked': 0, 'start_time': time.time()}
+    all_results = {
+        'charged': [], 'live': [], 'dead': [],
+        'total': total_cards, 'checked': 0,
+        'start_time': time.time(),
+        'last_card': '', 'last_response': '—'
+    }
+    cards_since_update = [0]
     try:
         queue = asyncio.Queue()
         for card in cards:
             queue.put_nowait(card)
-        last_update_time = [time.time()]
 
         async def worker():
             while not queue.empty() and session_key in active_sessions:
                 session_state = active_sessions.get(session_key)
                 if not session_state:
                     break
-                while session_state.get('paused', False):
-                    await asyncio.sleep(1)
-                    session_state = active_sessions.get(session_key)
-                    if not session_state:
-                        return
                 try:
                     card = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
-                current_sites = load_sites()
                 current_proxies = load_proxies()
-                if not current_sites or not current_proxies:
+                if not filtered_sites or not current_proxies:
                     break
-                res = await check_card_with_retry(card, current_sites, current_proxies, max_retries=1)
+                res = await check_card_with_retry(card, filtered_sites, current_proxies, max_retries=1)
                 all_results['checked'] += 1
+                all_results['last_card'] = card
+                all_results['last_response'] = res.get('message', '—')
                 if res['status'] == 'Charged':
                     all_results['charged'].append(res)
                     await send_realtime_hit(user_id, res, 'Charged', username)
@@ -2031,14 +2137,13 @@ async def check_command(event):
                 else:
                     all_results['dead'].append(res)
                 queue.task_done()
-                now = time.time()
-                if now - last_update_time[0] >= 1.0:
-                    last_update_time[0] = now
-                    if session_key in active_sessions:
-                        try:
-                            await update_progress(user_id, status_msg.id, all_results, all_results['checked'])
-                        except Exception:
-                            pass
+                cards_since_update[0] += 1
+                if cards_since_update[0] >= 20 and session_key in active_sessions:
+                    cards_since_update[0] = 0
+                    try:
+                        await update_progress(user_id, status_msg.id, all_results, all_results['checked'])
+                    except Exception:
+                        pass
 
         workers = [asyncio.create_task(worker()) for _ in range(10)]
         while workers:
@@ -2047,8 +2152,8 @@ async def check_command(event):
                     if not w.done():
                         w.cancel()
                 break
-            done, pending = await asyncio.wait(workers, timeout=1.0)
-            workers = list(pending)
+            done, pending_w = await asyncio.wait(workers, timeout=1.0)
+            workers = list(pending_w)
         if session_key in active_sessions:
             await update_progress(user_id, status_msg.id, all_results, all_results['checked'])
     except Exception as e:
