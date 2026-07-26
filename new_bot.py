@@ -828,6 +828,8 @@ async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=N
                         payment_identifier = payment_method.get('paymentMethodIdentifier')
                         gateway = payment_method.get('extensibilityDisplayName') or payment_method.get('name', 'UNKNOWN')
                         total_price = str(float(running_total) + shipping_amount + tax_amount)
+                        # Use Shopify-confirmed merchandise price to avoid MERCHANDISE_EXPECTED_PRICE_MISMATCH
+                        confirmed_merch_price = str(round(float(running_total) - shipping_amount - tax_amount, 2))
                         break
             if not payment_identifier:
                 return False, "No valid payment method found", gateway, total_price, currency
@@ -912,7 +914,7 @@ async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=N
                             'stableId': stableId or '1',
                             'merchandise': {'productVariantReference': {'id': f'gid://shopify/ProductVariantMerchandise/{merch}', 'variantId': f'gid://shopify/ProductVariant/{variant_id}', 'properties': [], 'sellingPlanId': None, 'sellingPlanDigest': None}},
                             'quantity': {'items': {'value': 1}},
-                            'expectedTotalPrice': {'value': {'amount': subtotal, 'currencyCode': currency}},
+                            'expectedTotalPrice': {'value': {'amount': confirmed_merch_price, 'currencyCode': currency}},
                             'lineComponentsSource': None, 'lineComponents': []
                         }]
                     },
