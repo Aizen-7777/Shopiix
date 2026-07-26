@@ -49,10 +49,10 @@ book = {
 }
 
 # =========== TIMEOUT CONSTANTS ===============
-TIMEOUT_PRODUCT_FETCH = 15
-TIMEOUT_CHECKOUT = 40
-TIMEOUT_GRAPHQL = 20
-TIMEOUT_VAULT = 12
+TIMEOUT_PRODUCT_FETCH = 10
+TIMEOUT_CHECKOUT = 22
+TIMEOUT_GRAPHQL = 10
+TIMEOUT_VAULT = 7
 
 # =========== LIVE RESPONSE CODES ===============
 _LIVE_CODES = (
@@ -185,7 +185,7 @@ async def make_graphql_request_with_captcha_handling(
     session, graphql_url, params, headers, json_data,
     checkout_url, max_retries=1, solve_captcha=True, proxy=None
 ):
-    timeout = aiohttp.ClientTimeout(total=TIMEOUT_GRAPHQL, connect=10, sock_read=15)
+    timeout = aiohttp.ClientTimeout(total=TIMEOUT_GRAPHQL, connect=6, sock_read=9)
     for attempt in range(max_retries + 1):
         try:
             response = await session.post(graphql_url, params=params, headers=headers, json=json_data, timeout=timeout, proxy=proxy)
@@ -418,7 +418,7 @@ async def fetch_products(domain, proxy_str=None):
     for attempt in range(2):
         try:
             connector = aiohttp.TCPConnector(ssl=False, force_close=True)
-            timeout = aiohttp.ClientTimeout(total=TIMEOUT_PRODUCT_FETCH, connect=10, sock_read=15)
+            timeout = aiohttp.ClientTimeout(total=TIMEOUT_PRODUCT_FETCH, connect=6, sock_read=8)
             async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
 
                 # Layer 1: Standard JSON endpoints
@@ -533,7 +533,7 @@ async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=N
                 return False, info[1], gateway, total_price, currency
             variant_id = info['variant_id']
         connector = aiohttp.TCPConnector(ssl=False, force_close=True)
-        timeout = aiohttp.ClientTimeout(total=TIMEOUT_CHECKOUT, connect=12, sock_read=25)
+        timeout = aiohttp.ClientTimeout(total=TIMEOUT_CHECKOUT, connect=8, sock_read=18)
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             url = ourl
             cart = url + '/cart/add.js'
@@ -771,7 +771,7 @@ async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=N
             delivery_type = delivery_data.get('__typename', '')
             if delivery_type == 'PendingTerms':
                 poll_delay_ms = delivery_data.get('pollDelay', 800)
-                await asyncio.sleep(min(poll_delay_ms / 1000.0, 0.8))
+                await asyncio.sleep(min(poll_delay_ms / 1000.0, 0.3))
                 response, resp_text, _ = await make_graphql_request_with_captcha_handling(
                     session, graphql_url, params, headers, json_data, checkout_url, max_retries=1, proxy=proxy)
                 if response:
@@ -874,7 +874,7 @@ async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=N
             }
             if ident_sig:
                 vault_headers['shopify-identification-signature'] = ident_sig
-            vault_timeout = aiohttp.ClientTimeout(total=TIMEOUT_VAULT, connect=8)
+            vault_timeout = aiohttp.ClientTimeout(total=TIMEOUT_VAULT, connect=5)
             token = None
             for v_attempt in range(3):
                 try:
@@ -1007,7 +1007,7 @@ async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=N
             params = {'operationName': 'PollForReceipt'}
             poll_json_data = {'query': QUERY_POLL, 'variables': {'receiptId': rid, 'sessionToken': sst}, 'operationName': 'PollForReceipt'}
             await asyncio.sleep(0.1)
-            poll_wait = 1.0
+            poll_wait = 0.4
             final_text = ""
             for i in range(8):
                 response, final_text, captcha_solved = await make_graphql_request_with_captcha_handling(
@@ -1039,7 +1039,7 @@ async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=N
                         if typename in ['ProcessingReceipt', 'WaitingReceipt']:
                             server_delay = receipt_data.get('pollDelay')
                             if server_delay and isinstance(server_delay, (int, float)) and server_delay > 0:
-                                poll_wait = min(server_delay / 1000.0, 0.5)
+                                poll_wait = min(server_delay / 1000.0, 0.3)
                             await asyncio.sleep(poll_wait)
                             continue
                 except (json.JSONDecodeError, KeyError, TypeError):
@@ -2034,7 +2034,7 @@ async def add_site_command(event):
     )
 
     proxies = load_proxies(user_id)
-    semaphore = asyncio.Semaphore(20)
+    semaphore = asyncio.Semaphore(50)
     added = []
     failed = []
     done_count = 0
@@ -2278,7 +2278,7 @@ async def _run_bulk_check(user_id, event, pending):
                     except Exception:
                         pass
 
-        workers = [asyncio.create_task(worker()) for _ in range(10)]
+        workers = [asyncio.create_task(worker()) for _ in range(25)]
         while workers:
             if session_key not in active_sessions:
                 for w in workers:
