@@ -1138,9 +1138,30 @@ OWNER_ID  = int(os.environ.get('TG_OWNER_ID', '5895386985'))
 
 PREMIUM_FILE = 'premium.txt'
 SITES_FILE = 'sites.txt'
+KEYS_FILE = 'keys.json'
 
 def get_proxy_file(user_id):
     return f'proxy_{user_id}.txt'
+
+# =========== KEY SYSTEM ===============
+def _load_keys():
+    try:
+        with open(KEYS_FILE, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_keys(keys):
+    try:
+        with open(KEYS_FILE, 'w') as f:
+            json.dump(keys, f, indent=2)
+    except Exception:
+        pass
+
+def _gen_key():
+    chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    parts = [''.join(random.choices(chars, k=4)) for _ in range(3)]
+    return 'SHOP-' + '-'.join(parts)
 
 bot = TelegramClient('shopiix_bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 active_sessions = {}
@@ -2308,6 +2329,91 @@ async def stop_handler(event):
         del active_sessions[session_key]
         await event.answer(premium_emoji("🛑 Stopped"))
         await event.edit(premium_emoji("❌ <b>Checking stopped by user.</b>"), parse_mode='html')
+
+@bot.on(events.NewMessage(pattern=r'^/genkey'))
+async def genkey_command(event):
+    user_id = event.sender_id
+    if not is_owner(user_id):
+        await event.reply(premium_emoji("❌ <b>Owner only command.</b>"), parse_mode='html')
+        return
+    parts = event.message.text.split()
+    count = 1
+    if len(parts) > 1:
+        try:
+            count = max(1, min(int(parts[1]), 20))
+        except ValueError:
+            count = 1
+    keys = _load_keys()
+    new_keys = []
+    for _ in range(count):
+        key = _gen_key()
+        while key in keys:
+            key = _gen_key()
+        keys[key] = {'used': False, 'user_id': None, 'created': int(time.time())}
+        new_keys.append(key)
+    _save_keys(keys)
+    key_list = '\n'.join([f"<code>{k}</code>" for k in new_keys])
+    await event.reply(
+        premium_emoji(f"🔑 <b>Generated {count} Key(s):</b>\n\n{key_list}\n\n"
+                      f"Users can redeem with: <code>/redeem KEY</code>"),
+        parse_mode='html'
+    )
+
+@bot.on(events.NewMessage(pattern=r'^/redeem\s+'))
+async def redeem_command(event):
+    user_id = event.sender_id
+    key_input = event.message.text.split(None, 1)[1].strip().upper()
+    keys = _load_keys()
+    if key_input not in keys:
+        await event.reply(premium_emoji("❌ <b>Invalid key.</b> Check and try again."), parse_mode='html')
+        return
+    if keys[key_input]['used']:
+        await event.reply(premium_emoji("❌ <b>Key already used.</b>"), parse_mode='html')
+        return
+    if is_premium(user_id):
+        await event.reply(premium_emoji("✅ <b>You already have premium access!</b>"), parse_mode='html')
+        return
+    keys[key_input]['used'] = True
+    keys[key_input]['user_id'] = user_id
+    keys[key_input]['redeemed_at'] = int(time.time())
+    _save_keys(keys)
+    async with aiofiles.open(PREMIUM_FILE, 'a') as f:
+        await f.write(f"{user_id}\n")
+    await event.reply(
+        premium_emoji("🎉 <b>Key Redeemed!</b>\n\n"
+                      "✅ You now have <b>premium access</b>.\n"
+                      "Use /cc to check cards and /chk for bulk checking."),
+        parse_mode='html'
+    )
+
+@bot.on(events.NewMessage(pattern=r'^/keys$'))
+async def list_keys_command(event):
+    user_id = event.sender_id
+    if not is_owner(user_id):
+        await event.reply(premium_emoji("❌ <b>Owner only command.</b>"), parse_mode='html')
+        return
+    keys = _load_keys()
+    if not keys:
+        await event.reply(premium_emoji("❌ No keys generated yet. Use /genkey to create some."), parse_mode='html')
+        return
+    unused = [(k, v) for k, v in keys.items() if not v['used']]
+    used = [(k, v) for k, v in keys.items() if v['used']]
+    lines = [premium_emoji(f"🔑 <b>Keys — {len(unused)} unused / {len(used)} used</b>\n\n")]
+    if unused:
+        lines.append(f"✅ <b>Unused ({len(unused)}):</b>\n")
+        for k, _ in unused[:20]:
+            lines.append(f"• <code>{k}</code>\n")
+        if len(unused) > 20:
+            lines.append(f"  ...and {len(unused) - 20} more\n")
+        lines.append("\n")
+    if used:
+        lines.append(f"❌ <b>Used ({len(used)}):</b>\n")
+        for k, v in used[:10]:
+            uid = v.get('user_id', '?')
+            lines.append(f"• <code>{k}</code> → <code>{uid}</code>\n")
+        if len(used) > 10:
+            lines.append(f"  ...and {len(used) - 10} more\n")
+    await event.reply(''.join(lines), parse_mode='html')
 
 print("✅ Shopiix Bot started successfully!")
 bot.run_until_disconnected()
