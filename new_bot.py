@@ -1506,31 +1506,121 @@ async def send_final_results(user_id, results):
 
 @bot.on(events.NewMessage(pattern='/start'))
 async def start(event):
-    await event.reply(
-        premium_emoji(
-            "💠 <b>Shopiix Checker</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n\n"
-            "💳 <b>Cards</b>\n"
-            "<blockquote>/cc <code>card|mm|yy|cvv</code> — Single check\n"
-            "/chk — Bulk check (reply to .txt)</blockquote>\n\n"
-            "🌐 <b>Sites</b>\n"
-            "<blockquote>/addsite <code>url</code> — Add site (or reply to .txt)\n"
-            "/getsite — List all sites\n"
-            "/site — Check & clean dead sites\n"
-            "/rm <code>url</code> — Remove a site</blockquote>\n\n"
-            "🔄 <b>Proxies</b>\n"
-            "<blockquote>/proxy — Check & clean dead proxies\n"
-            "/addproxy — Add proxies (one per line)\n"
-            "/chkproxy <code>proxy</code> — Test single proxy\n"
-            "/rmproxy <code>proxy</code> — Remove a proxy\n"
-            "/rmproxyindex <code>1,2,3</code> — Remove by index\n"
-            "/clearproxy — Clear all proxies\n"
-            "/getproxy — List all proxies</blockquote>\n\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "⚠️ <i>Premium access required.</i>"
-        ),
-        parse_mode='html'
+    user_id = event.sender_id
+    # Boot animation
+    anim = await event.reply("⚡", parse_mode='html')
+    await asyncio.sleep(0.4)
+    await anim.edit("⚡ 𝗦𝘆𝘀𝘁𝗲𝗺 𝗜𝗻𝗶𝘁𝗶𝗮𝗹𝗶𝘇𝗶𝗻𝗴...")
+    await asyncio.sleep(0.5)
+    await anim.edit("⚡ 𝗦𝘆𝘀𝘁𝗲𝗺 𝗜𝗻𝗶𝘁𝗶𝗮𝗹𝗶𝘇𝗶𝗻𝗴...\n🔗 𝗖𝗼𝗻𝗻𝗲𝗰𝘁𝗶𝗻𝗴 𝘁𝗼 𝗚𝗮𝘁𝗲𝘄𝗮𝘆...")
+    await asyncio.sleep(0.5)
+    await anim.edit("⚡ 𝗦𝘆𝘀𝘁𝗲𝗺 𝗜𝗻𝗶𝘁𝗶𝗮𝗹𝗶𝘇𝗶𝗻𝗴...\n🔗 𝗖𝗼𝗻𝗻𝗲𝗰𝘁𝗶𝗻𝗴 𝘁𝗼 𝗚𝗮𝘁𝗲𝘄𝗮𝘆...\n✅ 𝗥𝗲𝗮𝗱𝘆!")
+    await asyncio.sleep(0.4)
+    premium = is_premium(user_id)
+    status_line = "✅ <b>Premium</b>" if premium else "🔒 <b>Free</b> — use /redeem to activate"
+    welcome = (
+        "🆆🆃🅱 <b>Welcome to Shopiix Checker</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "⭐ High-speed Shopify gateway checker\n"
+        "✅ Supports all proxy formats\n"
+        "🪐 Multi-site rotation with retry logic\n"
+        "🔑 Key-based premium access system\n\n"
+        "🔥 Use the menu below to get started:\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 Status: {status_line}"
     )
+    buttons = [
+        [Button.inline("💳  C M D S", b"menu_cmds"), Button.inline("🔧  Set Proxy", b"menu_proxy")],
+        [Button.inline("👤  My Profile", b"menu_profile")],
+    ]
+    await anim.edit(premium_emoji(welcome), buttons=buttons, parse_mode='html')
+
+@bot.on(events.CallbackQuery(pattern=b"menu_cmds"))
+async def menu_cmds_handler(event):
+    user_id = event.sender_id
+    await event.answer()
+    owner_cmds = (
+        "\n\n🌐 <b>Sites</b> <i>(owner)</i>\n"
+        "<blockquote>/addsite <code>url</code> — Add site\n"
+        "/getsite — List sites\n"
+        "/site — Clean dead sites\n"
+        "/rm <code>url</code> — Remove site</blockquote>\n\n"
+        "🔑 <b>Keys</b> <i>(owner)</i>\n"
+        "<blockquote>/genkey [n] [Xd] — Generate keys\n"
+        "/keys — List all keys</blockquote>"
+    ) if is_owner(user_id) else ""
+    text = (
+        "💠 <b>All Commands</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "💳 <b>Cards</b>\n"
+        "<blockquote>/cc <code>card|mm|yy|cvv</code> — Single check\n"
+        "/chk — Bulk check (reply to .txt)</blockquote>\n\n"
+        "🔄 <b>Proxies</b>\n"
+        "<blockquote>/addproxy — Add proxies\n"
+        "/proxy — Check & clean dead\n"
+        "/chkproxy — Test a proxy\n"
+        "/rmproxy — Remove proxy\n"
+        "/clearproxy — Clear all\n"
+        "/getproxy — List proxies</blockquote>"
+        + owner_cmds +
+        "\n\n🎟️ <b>Access</b>\n"
+        "<blockquote>/redeem <code>KEY</code> — Activate premium</blockquote>"
+    )
+    await event.reply(premium_emoji(text), parse_mode='html')
+
+@bot.on(events.CallbackQuery(pattern=b"menu_proxy"))
+async def menu_proxy_handler(event):
+    await event.answer()
+    text = (
+        "🔧 <b>Set Proxy</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "Send proxies in this format:\n"
+        "<code>ip:port:user:pass</code>\n"
+        "<code>ip:port</code>\n\n"
+        "Use the command:\n"
+        "<code>/addproxy\nip:port:user:pass\nip:port:user:pass</code>\n\n"
+        "— or reply to a <code>.txt</code> file with /addproxy"
+    )
+    await event.reply(premium_emoji(text), parse_mode='html')
+
+@bot.on(events.CallbackQuery(pattern=b"menu_profile"))
+async def menu_profile_handler(event):
+    user_id = event.sender_id
+    await event.answer()
+    try:
+        sender = await event.get_sender()
+        name = sender.first_name or "User"
+    except Exception:
+        name = "User"
+    premium = is_premium(user_id)
+    owner = is_owner(user_id)
+    proxy_count = len(load_proxies(user_id))
+    role = "👑 Owner" if owner else ("✅ Premium" if premium else "🔒 Free")
+    # Check key expiry if premium and not owner
+    expiry_line = ""
+    if premium and not owner:
+        keys = _load_keys()
+        for k, v in keys.items():
+            if v.get('user_id') == user_id and v.get('used'):
+                exp = v.get('expires_at')
+                if exp:
+                    from datetime import datetime as _dt
+                    exp_str = _dt.utcfromtimestamp(exp).strftime("%d %b %Y")
+                    expiry_line = f"\n⏳ <b>Expires:</b> {exp_str}"
+                else:
+                    expiry_line = "\n♾️ <b>Access:</b> Lifetime"
+                break
+    text = (
+        f"👤 <b>My Profile</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n\n"
+        f"🙍 <b>Name:</b> {name}\n"
+        f"🆔 <b>ID:</b> <code>{user_id}</code>\n"
+        f"🎭 <b>Role:</b> {role}"
+        f"{expiry_line}\n"
+        f"🔧 <b>Proxies:</b> {proxy_count}\n"
+        f"━━━━━━━━━━━━━━━━━━"
+    )
+    await event.reply(premium_emoji(text), parse_mode='html')
 
 @bot.on(events.NewMessage(pattern=r'^/cc'))
 async def single_cc_check(event):
