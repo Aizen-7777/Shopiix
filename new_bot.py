@@ -213,15 +213,16 @@ async def make_graphql_request_with_captcha_handling(
 def _pick_cheapest(products, domain):
     min_price = float('inf')
     min_product = None
+    fallback_price = float('inf')
+    fallback_product = None
     for product in products:
         if not product.get('variants'):
             continue
         for variant in product['variants']:
-            if not variant.get('available', True):
-                continue
             try:
                 price = float(str(variant.get('price', '0')).replace(',', ''))
-                if price < min_price:
+                available = variant.get('available', True)
+                if available and price < min_price:
                     min_price = price
                     min_product = {
                         'site': domain,
@@ -229,21 +230,35 @@ def _pick_cheapest(products, domain):
                         'variant_id': str(variant['id']),
                         'link': f"{domain}/products/{product['handle']}"
                     }
+                elif not available and price < fallback_price:
+                    fallback_price = price
+                    fallback_product = {
+                        'site': domain,
+                        'price': f"{price:.2f}",
+                        'variant_id': str(variant['id']),
+                        'link': f"{domain}/products/{product['handle']}"
+                    }
             except (ValueError, TypeError, AttributeError):
                 continue
-    return min_product
+    return min_product or fallback_product
 
 _BROWSER_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.9',
 }
+_JSON_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/javascript, */*; q=0.01',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'X-Requested-With': 'XMLHttpRequest',
+}
 
 async def _try_product_handle(session, domain, handle, proxy):
     """Fetch single product by handle — returns cheapest variant dict or None."""
     try:
         async with session.get(
-            f"{domain}/products/{handle}.json", proxy=proxy, headers=_BROWSER_HEADERS
+            f"{domain}/products/{handle}.json", proxy=proxy, headers=_JSON_HEADERS
         ) as r:
             if r.status != 200:
                 return None
@@ -258,51 +273,50 @@ async def _try_product_handle(session, domain, handle, proxy):
 
 async def _search_fallback(domain, session, proxy):
     """Shopify search/suggest API — almost never blocked, works on headless stores."""
-    endpoints = [
-        f"{domain}/search/suggest.json?q=*&resources[type]=product&resources[limit]=5",
-        f"{domain}/search.json?q=*&type=product",
-    ]
-    for url in endpoints:
-        try:
-            async with session.get(url, proxy=proxy, headers=_BROWSER_HEADERS) as resp:
-                if resp.status != 200:
-                    continue
-                data = await resp.json(content_type=None)
-            products = (
-                data.get('resources', {}).get('results', {}).get('products', [])
-                or data.get('products', [])
-            )
-            if not products:
-                continue
-            # suggest API returns variants inline
-            for product in products:
-                variants = product.get('variants', [])
-                for v in variants:
-                    vid = v.get('id') or v.get('variant_id')
-                    price_raw = v.get('price', '0')
-                    if not vid:
+    search_queries = ['a', 'e', 't', 's', 'the']
+    for q in search_queries:
+        for url in [
+            f"{domain}/search/suggest.json?q={q}&resources[type]=product&resources[limit]=5",
+            f"{domain}/search.json?q={q}&type=product",
+        ]:
+            try:
+                async with session.get(url, proxy=proxy, headers=_JSON_HEADERS) as resp:
+                    if resp.status != 200:
                         continue
-                    try:
-                        price = float(str(price_raw).replace(',', ''))
-                        if price > 10000:   # cents → dollars
-                            price /= 100
-                    except Exception:
-                        price = 1.00
-                    return {
-                        'site': domain,
-                        'price': f"{price:.2f}",
-                        'variant_id': str(vid),
-                        'link': f"{domain}/products/{product.get('handle', '')}"
-                    }
-            # fallback: use handle to get full product JSON
-            for product in products:
-                handle = product.get('handle', '')
-                if handle:
-                    result = await _try_product_handle(session, domain, handle, proxy)
-                    if result:
-                        return result
-        except Exception:
-            continue
+                    data = await resp.json(content_type=None)
+                products = (
+                    data.get('resources', {}).get('results', {}).get('products', [])
+                    or data.get('products', [])
+                )
+                if not products:
+                    continue
+                # suggest API returns variants inline
+                for product in products:
+                    for v in product.get('variants', []):
+                        vid = v.get('id') or v.get('variant_id')
+                        if not vid:
+                            continue
+                        try:
+                            price = float(str(v.get('price', '0')).replace(',', ''))
+                            if price > 10000:
+                                price /= 100
+                        except Exception:
+                            price = 1.00
+                        return {
+                            'site': domain,
+                            'price': f"{price:.2f}",
+                            'variant_id': str(vid),
+                            'link': f"{domain}/products/{product.get('handle', '')}"
+                        }
+                # fallback: fetch full product JSON by handle
+                for product in products:
+                    handle = product.get('handle', '')
+                    if handle:
+                        result = await _try_product_handle(session, domain, handle, proxy)
+                        if result:
+                            return result
+            except Exception:
+                continue
     return None
 
 async def _sitemap_fallback(domain, session, proxy):
@@ -411,7 +425,7 @@ async def fetch_products(domain, proxy_str=None):
                 # Layer 1: Standard JSON endpoints
                 for endpoint_url in json_endpoints:
                     try:
-                        async with session.get(endpoint_url, proxy=proxy, headers=_BROWSER_HEADERS) as resp:
+                        async with session.get(endpoint_url, proxy=proxy, headers=_JSON_HEADERS) as resp:
                             if resp.status != 200:
                                 last_err = f"Status {resp.status}"
                                 continue
