@@ -1483,7 +1483,10 @@ async def send_final_results(user_id, results):
         await f.write(f"\n❌ DEAD ({len(results['dead'])}):\n" + "-" * 70 + "\n")
         for r in results['dead']:
             await f.write(f"{r['card']} | {r.get('gateway', 'Unknown')} | {r.get('price', '-')} | {r['message'][:100]} | {r.get('site', 'Unknown')}\n")
-    await bot.send_message(user_id, premium_emoji(summary), file=filename, parse_mode='html')
+    if is_owner(user_id):
+        await bot.send_message(user_id, premium_emoji(summary), file=filename, parse_mode='html')
+    else:
+        await bot.send_message(user_id, premium_emoji(summary), parse_mode='html')
     try:
         os.remove(filename)
     except Exception:
