@@ -1145,76 +1145,8 @@ PREMIUM_FILE = 'premium.txt'
 SITES_FILE = 'sites.txt'
 KEYS_FILE = 'keys.json'
 
-GITHUB_TOKEN  = os.environ.get('GITHUB_TOKEN', '')
-GITHUB_REPO   = os.environ.get('GITHUB_REPO', '')
-GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
-
 def get_proxy_file(user_id):
     return f'proxy_{user_id}.txt'
-
-async def _github_get_sha(path):
-    if not GITHUB_TOKEN or not GITHUB_REPO:
-        return None
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
-    headers = {'Authorization': f'token {GITHUB_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, headers=headers, params={'ref': GITHUB_BRANCH}) as r:
-                if r.status == 200:
-                    return (await r.json()).get('sha')
-    except Exception:
-        pass
-    return None
-
-async def _github_write(path, content, message='Update'):
-    if not GITHUB_TOKEN or not GITHUB_REPO:
-        return
-    import base64
-    sha = await _github_get_sha(path)
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
-    headers = {'Authorization': f'token {GITHUB_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
-    body = {
-        'message': message,
-        'content': base64.b64encode(content.encode()).decode(),
-        'branch': GITHUB_BRANCH,
-    }
-    if sha:
-        body['sha'] = sha
-    try:
-        async with aiohttp.ClientSession() as s:
-            await s.put(url, headers=headers, json=body)
-    except Exception:
-        pass
-
-async def _github_read(path):
-    if not GITHUB_TOKEN or not GITHUB_REPO:
-        return None
-    import base64
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
-    headers = {'Authorization': f'token {GITHUB_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, headers=headers, params={'ref': GITHUB_BRANCH}) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    return base64.b64decode(data['content']).decode('utf-8')
-    except Exception:
-        pass
-    return None
-
-async def sync_sites_to_github():
-    try:
-        async with aiofiles.open(SITES_FILE, 'r') as f:
-            content = await f.read()
-        await _github_write('sites.txt', content, 'Sync sites')
-    except Exception:
-        pass
-
-async def load_sites_from_github():
-    content = await _github_read('sites.txt')
-    if content is not None:
-        async with aiofiles.open(SITES_FILE, 'w') as f:
-            await f.write(content)
 
 # =========== KEY SYSTEM ===============
 def _load_keys():
@@ -1290,7 +1222,6 @@ async def auto_remove_dead_site(url):
             async with aiofiles.open(SITES_FILE, 'w') as f:
                 for site in new_sites:
                     await f.write(f"{site['url']}|{site.get('variant_id', '')}|{site.get('price', '-')}\n")
-            asyncio.create_task(sync_sites_to_github())
     except Exception:
         pass
 
@@ -2029,7 +1960,6 @@ async def remove_site_command(event):
     async with aiofiles.open(SITES_FILE, 'w') as f:
         for site in new_sites:
             await f.write(f"{site['url']}|{site.get('variant_id', '')}|{site.get('price', '-')}\n")
-    asyncio.create_task(sync_sites_to_github())
     await event.reply(premium_emoji(f"✅ <b>Site Removed!</b>\n\n<code>{url_to_remove}</code>"), parse_mode='html')
 
 @bot.on(events.NewMessage(pattern=r'^/addsite'))
@@ -2130,7 +2060,6 @@ async def add_site_command(event):
         async with aiofiles.open(SITES_FILE, 'a') as f:
             for s in added:
                 await f.write(f"{s['url']}|{s.get('variant_id', '')}|{s.get('price', '-')}\n")
-        asyncio.create_task(sync_sites_to_github())
 
     lines = [premium_emoji("🌐 <b>Add Sites — Result</b>\n━━━━━━━━━━━━━━━━━━\n\n")]
 
@@ -2454,7 +2383,6 @@ async def site_command(event):
         async with aiofiles.open(SITES_FILE, 'w') as f:
             for site in alive_sites:
                 await f.write(f"{site['url']}|{site.get('variant_id', '')}|{site.get('price', '-')}\n")
-        asyncio.create_task(sync_sites_to_github())
         await status_msg.edit(premium_emoji(
             f"✅ <b>Site Check Complete!</b>\n\n"
             f"<b>Total:</b> {len(sites)}\n"
@@ -2602,10 +2530,5 @@ async def list_keys_command(event):
             lines.append(f"  ...and {len(used) - 10} more\n")
     await event.reply(''.join(lines), parse_mode='html')
 
-async def _on_start():
-    await load_sites_from_github()
-    print("✅ Shopiix Bot started successfully!")
-
-with bot:
-    bot.loop.run_until_complete(_on_start())
-    bot.run_until_disconnected()
+print("✅ Shopiix Bot started successfully!")
+bot.run_until_disconnected()
