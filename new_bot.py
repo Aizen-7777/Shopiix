@@ -409,9 +409,9 @@ async def fetch_products(domain, proxy_str=None):
     domain = domain.rstrip('/')
 
     json_endpoints = [
-        f"{domain}/products.json?limit=5",
-        f"{domain}/collections/all/products.json?limit=5",
-        f"{domain}/collections/frontpage/products.json?limit=5",
+        f"{domain}/collections/all/products.json?limit=250&sort_by=price-ascending",
+        f"{domain}/products.json?limit=250",
+        f"{domain}/collections/frontpage/products.json?limit=250&sort_by=price-ascending",
         f"{domain}/collections/all.json",
     ]
 
