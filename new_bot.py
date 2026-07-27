@@ -2200,11 +2200,11 @@ async def get_site_command(event):
 
 
 def _price_filter_buttons(selected):
-    """Build inline keyboard for price filter. selected: '10_20' | '30_40' | None"""
-    b1 = f"$ $10-$20 {'✅' if selected == '10_20' else ''}"
+    """Build inline keyboard for price filter. selected: '1_20' | '30_40' | None"""
+    b1 = f"$ $1-$20 {'✅' if selected == '1_20' else ''}"
     b2 = f"$ $30-$40 {'✅' if selected == '30_40' else ''}"
     return [
-        [Button.inline(b1.strip(), b"pf_10_20"), Button.inline(b2.strip(), b"pf_30_40")],
+        [Button.inline(b1.strip(), b"pf_1_20"), Button.inline(b2.strip(), b"pf_30_40")],
         [Button.inline("✅ DONE — Start Checking", b"pf_done")],
     ]
 
@@ -2266,16 +2266,16 @@ async def price_filter_callback(event):
     if not pending:
         await event.answer("Session expired. Please run /chk again.")
         return
-    if data == "pf_10_20":
-        pending['selected'] = '10_20'
-        await event.answer("$10-$20 selected ✅")
+    if data == "pf_1_20":
+        pending['selected'] = '1_20'
+        await event.answer("$1-$20 selected ✅")
         filter_text = (
             f"💳 <b>Found {len(pending['cards'])} cards</b>\n\n"
             f"💰 Choose the price range to check under,\n"
             f"then tap <b>✅ DONE</b> to start."
         )
         try:
-            await event.edit(premium_emoji(filter_text), buttons=_price_filter_buttons('10_20'), parse_mode='html')
+            await event.edit(premium_emoji(filter_text), buttons=_price_filter_buttons('1_20'), parse_mode='html')
         except Exception:
             pass
     elif data == "pf_30_40":
@@ -2302,11 +2302,25 @@ async def _run_bulk_check(user_id, event, pending):
     cards = pending['cards']
     username = pending['username']
     selected = pending['selected']
-    price_range = (10, 20) if selected == '10_20' else (30, 40)
+    price_range = (1, 20) if selected == '1_20' else (30, 40)
     all_sites = load_sites()
     filtered_sites = filter_sites_by_price(all_sites, price_range)
     total_cards = len(cards)
-    range_label = "$10-$20" if selected == '10_20' else "$30-$40"
+    range_label = "$1-$20" if selected == '1_20' else "$30-$40"
+    # Refresh cheapest product for each site in parallel before checking starts
+    refresh_proxies = load_proxies(user_id)
+    async def _refresh_site(s):
+        try:
+            proxy = random.choice(refresh_proxies) if refresh_proxies else None
+            result = await fetch_products(s['url'], proxy_str=proxy)
+            if isinstance(result, dict) and result.get('variant_id'):
+                return {'url': s['url'], 'variant_id': result['variant_id'], 'price': result.get('price', s.get('price', '-'))}
+        except Exception:
+            pass
+        return s
+    refreshed = await asyncio.gather(*[_refresh_site(s) for s in filtered_sites])
+    filtered_sites = list(refreshed)
+
     status_msg = await bot.send_message(
         user_id,
         premium_emoji(
