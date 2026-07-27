@@ -2307,20 +2307,6 @@ async def _run_bulk_check(user_id, event, pending):
     filtered_sites = filter_sites_by_price(all_sites, price_range)
     total_cards = len(cards)
     range_label = "$1-$20" if selected == '1_20' else "$30-$40"
-    # Refresh cheapest product for each site in parallel before checking starts
-    refresh_proxies = load_proxies(user_id)
-    async def _refresh_site(s):
-        try:
-            proxy = random.choice(refresh_proxies) if refresh_proxies else None
-            result = await fetch_products(s['url'], proxy_str=proxy)
-            if isinstance(result, dict) and result.get('variant_id'):
-                return {'url': s['url'], 'variant_id': result['variant_id'], 'price': result.get('price', s.get('price', '-'))}
-        except Exception:
-            pass
-        return s
-    refreshed = await asyncio.gather(*[_refresh_site(s) for s in filtered_sites])
-    filtered_sites = list(refreshed)
-
     status_msg = await bot.send_message(
         user_id,
         premium_emoji(
