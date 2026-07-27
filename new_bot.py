@@ -49,10 +49,10 @@ book = {
 }
 
 # =========== TIMEOUT CONSTANTS ===============
-TIMEOUT_PRODUCT_FETCH = 8
-TIMEOUT_CHECKOUT = 16
-TIMEOUT_GRAPHQL = 8
-TIMEOUT_VAULT = 7
+TIMEOUT_PRODUCT_FETCH = 10
+TIMEOUT_CHECKOUT = 22
+TIMEOUT_GRAPHQL = 10
+TIMEOUT_VAULT = 10
 
 # =========== LIVE RESPONSE CODES ===============
 _LIVE_CODES = (
@@ -185,7 +185,7 @@ async def make_graphql_request_with_captcha_handling(
     session, graphql_url, params, headers, json_data,
     checkout_url, max_retries=1, solve_captcha=True, proxy=None
 ):
-    timeout = aiohttp.ClientTimeout(total=TIMEOUT_GRAPHQL, connect=4, sock_read=7)
+    timeout = aiohttp.ClientTimeout(total=TIMEOUT_GRAPHQL, connect=6, sock_read=9)
     for attempt in range(max_retries + 1):
         try:
             response = await session.post(graphql_url, params=params, headers=headers, json=json_data, timeout=timeout, proxy=proxy)
@@ -194,15 +194,15 @@ async def make_graphql_request_with_captcha_handling(
         except asyncio.TimeoutError:
             if attempt == max_retries:
                 return None, "Request timed out", False
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(0.5)
         except (aiohttp.ClientHttpProxyError, aiohttp.ClientProxyConnectionError):
             if attempt == max_retries:
                 return None, "Proxy Error: Authentication failed", False
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(0.5)
         except aiohttp.ClientConnectorError:
             if attempt == max_retries:
                 return None, "Proxy Error: Could not connect", False
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(0.5)
         except Exception as e:
             if attempt == max_retries:
                 return None, str(e), False
@@ -418,7 +418,7 @@ async def fetch_products(domain, proxy_str=None):
     for attempt in range(2):
         try:
             connector = aiohttp.TCPConnector(ssl=False, force_close=True)
-            timeout = aiohttp.ClientTimeout(total=TIMEOUT_PRODUCT_FETCH, connect=4, sock_read=6)
+            timeout = aiohttp.ClientTimeout(total=TIMEOUT_PRODUCT_FETCH, connect=6, sock_read=8)
             async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
 
                 # Layer 1: Standard JSON endpoints
@@ -464,7 +464,7 @@ async def fetch_products(domain, proxy_str=None):
                 last_err = "Proxy auth failed"
             else:
                 last_err = "Could not connect"
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.3)
     return False, last_err
 
 def extract_clean_response(message):
@@ -533,7 +533,7 @@ async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=N
                 return False, info[1], gateway, total_price, currency
             variant_id = info['variant_id']
         connector = aiohttp.TCPConnector(ssl=False, force_close=True)
-        timeout = aiohttp.ClientTimeout(total=TIMEOUT_CHECKOUT, connect=5, sock_read=13)
+        timeout = aiohttp.ClientTimeout(total=TIMEOUT_CHECKOUT, connect=8, sock_read=18)
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             url = ourl
             cart = url + '/cart/add.js'
@@ -879,9 +879,9 @@ async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=N
             }
             if ident_sig:
                 vault_headers['shopify-identification-signature'] = ident_sig
-            vault_timeout = aiohttp.ClientTimeout(total=TIMEOUT_VAULT, connect=5)
+            vault_timeout = aiohttp.ClientTimeout(total=TIMEOUT_VAULT, connect=7)
             token = None
-            for v_attempt in range(2):
+            for v_attempt in range(3):
                 try:
                     response = await session.post('https://checkout.pci.shopifyinc.com/sessions', json=payload, headers=vault_headers, proxy=proxy, timeout=vault_timeout)
                     if response.status == 200:
@@ -1011,8 +1011,8 @@ async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=N
                 return False, f"Error parsing submit: {str(e)}", gateway, total_price, currency
             params = {'operationName': 'PollForReceipt'}
             poll_json_data = {'query': QUERY_POLL, 'variables': {'receiptId': rid, 'sessionToken': sst}, 'operationName': 'PollForReceipt'}
-            await asyncio.sleep(0.05)
-            poll_wait = 0.3
+            await asyncio.sleep(0.1)
+            poll_wait = 0.4
             final_text = ""
             for i in range(8):
                 response, final_text, captcha_solved = await make_graphql_request_with_captcha_handling(
@@ -1312,7 +1312,7 @@ async def check_card_with_retry(card, sites, proxies, max_retries=2):
             return result
         last_result = result
         if attempt < max_retries - 1:
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.3)
     if last_result:
         return {'status': 'Dead', 'message': f"Site errors: {last_result['message']}", 'card': card, 'gateway': last_result.get('gateway', 'Unknown'), 'price': last_result.get('price', '-'), 'site': 'Multiple'}
     return {'status': 'Dead', 'message': 'Max retries exceeded', 'card': card, 'gateway': 'Unknown', 'price': '-'}
@@ -2276,7 +2276,7 @@ async def _run_bulk_check(user_id, event, pending):
                     except Exception:
                         pass
 
-        workers = [asyncio.create_task(worker()) for _ in range(35)]
+        workers = [asyncio.create_task(worker()) for _ in range(25)]
         while workers:
             if session_key not in active_sessions:
                 for w in workers:
