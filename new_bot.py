@@ -1476,30 +1476,26 @@ async def update_progress(user_id, message_id, results, current_attempt_count):
     if last_card_raw:
         parts = last_card_raw.split('|')
         num = parts[0]
-        masked = num[:6] + '··' + num[-4:] if len(num) > 10 else num
+        masked = num[:6] + '*' * max(0, len(num) - 10) + num[-4:] if len(num) > 10 else num
         last_card_display = masked
     else:
-        last_card_display = '——'
-    last_resp = results.get('last_response', '——')
-    if len(last_resp) > 24:
-        last_resp = last_resp[:22] + '…'
+        last_card_display = '—'
+    last_resp = results.get('last_response', '—')
+    if len(last_resp) > 28:
+        last_resp = last_resp[:26] + '...'
     charged = len(results['charged'])
     live = len(results['live'])
     dead = len(results['dead'])
-    total = results['total']
-    filled = int((current_attempt_count / total * 12)) if total else 0
-    bar = '█' * filled + '░' * (12 - filled)
-    header = premium_emoji(
-        f"⚡ <b>SHOPIIX</b>  ·  <i>Engine Running</i>"
-    )
+    header = premium_emoji("⚡ <b>#Shopiix</b> ⚡\n🔄 <i>Cooking CCs One by One...</i>")
     buttons = [
-        [Button.inline(f"⊹ ⊹ ⊹  S H O P I I X  ⊹ ⊹ ⊹", b"noop")],
-        [Button.inline(f"💳  {last_card_display}", b"noop")],
-        [Button.inline(f"◈  {last_resp}", b"noop")],
-        [Button.inline(f"💎  {charged}   🔥  {live}   ❌  {dead}", b"noop")],
-        [Button.inline(f"{bar}  {current_attempt_count}/{total}", b"noop")],
-        [Button.inline(f"⏱  {hours}h {minutes}m {seconds}s", b"noop")],
-        [Button.inline("⛔  ■  S  T  O  P  ■  ⛔", b"stop")],
+        [Button.inline(f"💳  Card  →  {last_card_display}", b"noop")],
+        [Button.inline(f"📝  Response  →  {last_resp}", b"noop")],
+        [Button.inline(f"💎  CHARGE  →  [ {charged} ]", b"noop")],
+        [Button.inline(f"🔥  Approve  →  [ {live} ]", b"noop")],
+        [Button.inline(f"❌  Decline  →  [ {dead} ]", b"noop")],
+        [Button.inline(f"✅  Progress  →  [ {current_attempt_count} / {results['total']} ]", b"noop")],
+        [Button.inline(f"⏱  Time  →  {hours}h {minutes}m {seconds}s", b"noop")],
+        [Button.inline("⛔  Stop", b"stop")],
     ]
     try:
         await bot.edit_message(user_id, message_id, header, buttons=buttons, parse_mode='html')
