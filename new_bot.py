@@ -1206,18 +1206,19 @@ async def check_force_join(user_id):
 
 async def show_force_join_msg(event):
     text = (
-        "🔒 <b>Access Locked</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "You must join <b>both</b> our channel &amp; group to\n"
-        "use this bot.\n\n"
-        "1️⃣ <b>Join the Channel</b>\n"
-        "2️⃣ <b>Join the Group</b>\n"
-        "3️⃣ Tap ✅ <b>I Joined</b> below"
+        "⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
+        "🔒  <b>𝗔𝗖𝗖𝗘𝗦𝗦  𝗟𝗢𝗖𝗞𝗘𝗗</b>  🔒\n"
+        "⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
+        "You must join <b>both</b> our channel\n"
+        "&amp; group to use this bot.\n\n"
+        "◆①  <b>Join the Channel</b>\n"
+        "◆②  <b>Join the Group</b>\n"
+        "◆③  Tap  ✅  <b>I Joined</b>  below"
     )
     buttons = [
-        [Button.url("📣  Join Channel", FORCE_JOIN_CHANNEL_LINK)],
-        [Button.url("💎  Join Group",   FORCE_JOIN_GROUP_LINK)],
-        [Button.inline("✅  I Joined",  b"check_join")],
+        [Button.url("📣  J O I N   C H A N N E L", FORCE_JOIN_CHANNEL_LINK)],
+        [Button.url("💎  J O I N   G R O U P",     FORCE_JOIN_GROUP_LINK)],
+        [Button.inline("✅  I   J O I N E D",       b"check_join")],
     ]
     try:
         await event.reply(text, buttons=buttons, parse_mode='html')
@@ -1433,19 +1434,18 @@ async def send_realtime_hit(user_id, result, hit_type, username):
     status_text = "𝐂𝐡𝐚𝐫𝐠𝐞𝐝" if hit_type == "Charged" else "𝐋𝐢𝐯𝐞"
     brand, bin_type, level, bank, country, flag = await get_bin_info(result['card'].split('|')[0])
     message = (
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"{emoji} <b>Hit Found — {status_text}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━\n\n"
-        f"💳 <code>{result['card']}</code>\n"
-        f"📝 <i>{result['message'][:150]}</i>\n"
-        f"🌐 {result.get('gateway', 'Unknown')}  ·  💰 {result.get('price', '-')}\n\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"💠 <b>BIN Info</b>\n"
-        f"<blockquote>{brand} · {bin_type} · {level}\n"
-        f"{bank}\n"
-        f"{country} {flag}</blockquote>\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f'🤖 <b>Bot By:</b> <a href="tg://user?id=5895386985">Aizen</a>'
+        f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
+        f"{emoji}  <b>{status_text}</b>  {emoji}\n"
+        f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
+        f"💳 <b>𝗖𝗔𝗥𝗗</b>   ▸  <code>{result['card']}</code>\n"
+        f"◈  <b>𝗥𝗘𝗦𝗣</b>   ▸  <i>{result['message'][:120]}</i>\n"
+        f"🌐 <b>𝗚𝗪</b>     ▸  {result.get('gateway', 'Unknown')}\n"
+        f"💰 <b>𝗣𝗥𝗜𝗖𝗘</b>  ▸  <code>{result.get('price', '—')}</code>\n\n"
+        f"〔 𝗕𝗜𝗡  𝗜𝗡𝗧𝗘𝗟𝗟𝗜𝗚𝗘𝗡𝗖𝗘 〕\n"
+        f"<blockquote>◆ {brand}  ·  {bin_type}  ·  {level}\n"
+        f"◆ {bank}\n"
+        f"◆ {country}  {flag}</blockquote>\n\n"
+        f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>'
     )
     try:
         await bot.send_message(user_id, premium_emoji(message), parse_mode='html')
@@ -1476,26 +1476,30 @@ async def update_progress(user_id, message_id, results, current_attempt_count):
     if last_card_raw:
         parts = last_card_raw.split('|')
         num = parts[0]
-        masked = num[:6] + '*' * max(0, len(num) - 10) + num[-4:] if len(num) > 10 else num
+        masked = num[:6] + '··' + num[-4:] if len(num) > 10 else num
         last_card_display = masked
     else:
-        last_card_display = '—'
-    last_resp = results.get('last_response', '—')
-    if len(last_resp) > 28:
-        last_resp = last_resp[:26] + '...'
+        last_card_display = '——'
+    last_resp = results.get('last_response', '——')
+    if len(last_resp) > 24:
+        last_resp = last_resp[:22] + '…'
     charged = len(results['charged'])
     live = len(results['live'])
     dead = len(results['dead'])
-    header = premium_emoji("⚡ <b>#Shopiix</b> ⚡\n🔄 <i>Cooking CCs One by One...</i>")
+    total = results['total']
+    filled = int((current_attempt_count / total * 12)) if total else 0
+    bar = '█' * filled + '░' * (12 - filled)
+    header = premium_emoji(
+        f"⚡ <b>SHOPIIX</b>  ·  <i>Engine Running</i>"
+    )
     buttons = [
-        [Button.inline(f"💳  Card  →  {last_card_display}", b"noop")],
-        [Button.inline(f"📝  Response  →  {last_resp}", b"noop")],
-        [Button.inline(f"💎  CHARGE  →  [ {charged} ]", b"noop")],
-        [Button.inline(f"🔥  Approve  →  [ {live} ]", b"noop")],
-        [Button.inline(f"❌  Decline  →  [ {dead} ]", b"noop")],
-        [Button.inline(f"✅  Progress  →  [ {current_attempt_count} / {results['total']} ]", b"noop")],
-        [Button.inline(f"⏱  Time  →  {hours}h {minutes}m {seconds}s", b"noop")],
-        [Button.inline("⛔  Stop", b"stop")],
+        [Button.inline(f"⊹ ⊹ ⊹  S H O P I I X  ⊹ ⊹ ⊹", b"noop")],
+        [Button.inline(f"💳  {last_card_display}", b"noop")],
+        [Button.inline(f"◈  {last_resp}", b"noop")],
+        [Button.inline(f"💎  {charged}   🔥  {live}   ❌  {dead}", b"noop")],
+        [Button.inline(f"{bar}  {current_attempt_count}/{total}", b"noop")],
+        [Button.inline(f"⏱  {hours}h {minutes}m {seconds}s", b"noop")],
+        [Button.inline("⛔  ■  S  T  O  P  ■  ⛔", b"stop")],
     ]
     try:
         await bot.edit_message(user_id, message_id, header, buttons=buttons, parse_mode='html')
@@ -1516,17 +1520,18 @@ async def send_final_results(user_id, results):
         hits_text = "No hits found"
     gateway = results['charged'][0]['gateway'] if results['charged'] else (results['live'][0]['gateway'] if results['live'] else 'Unknown')
     summary = (
-        f"<b>⚡💳 ㅤ#Shopiix  💳⚡</b>\n"
-        f"<b>─────────────────</b>\n"
-        f"<b>⚡💠 𝐑𝐞𝐬𝐮𝐥𝐭𝐬</b>\n"
-        f"<blockquote>💳 Total: {results['total']} | ✅ Charged: {len(results['charged'])} | 🔥 Live: {len(results['live'])} | ❌ Dead: {len(results['dead'])}</blockquote>\n"
-        f"<blockquote>🌐 𝐆𝐚𝐭𝐞𝐰𝐚𝐲: 🔥 {gateway}</blockquote>\n"
-        f"<blockquote>⏱️ Time: {hours}h {minutes}m {seconds}s</blockquote>\n"
-        f"<b>─────────────────</b>\n"
-        f"<b>🎯💠 𝐇𝐢𝐭𝐬</b>\n"
-        f"<blockquote>{hits_text}</blockquote>\n"
-        f"<b>─────────────────</b>\n\n"
-        f'🤖 <b>Bot By: <a href="tg://user?id=5895386985">ㅤＡｉｚｅｎ</a></b>'
+        f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
+        f"⚡  <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫  ·  𝗦𝗖𝗔𝗡  𝗖𝗢𝗠𝗣𝗟𝗘𝗧𝗘</b>  ⚡\n"
+        f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
+        f"💳 <b>𝗧𝗢𝗧𝗔𝗟</b>    ▸  <code>{results['total']}</code>\n"
+        f"💎 <b>𝗖𝗛𝗔𝗥𝗚𝗘𝗗</b>  ▸  <code>{len(results['charged'])}</code>\n"
+        f"🔥 <b>𝗟𝗜𝗩𝗘</b>     ▸  <code>{len(results['live'])}</code>\n"
+        f"❌ <b>𝗗𝗘𝗔𝗗</b>     ▸  <code>{len(results['dead'])}</code>\n"
+        f"🌐 <b>𝗚𝗔𝗧𝗘𝗪𝗔𝗬</b>  ▸  {gateway}\n"
+        f"⏱  <b>𝗧𝗜𝗠𝗘</b>     ▸  {hours}h {minutes}m {seconds}s\n\n"
+        f"〔 🎯  H I T S 〕\n"
+        f"<blockquote>{hits_text}</blockquote>\n\n"
+        f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>'
     )
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"shopiix_{user_id}_{timestamp}.txt"
@@ -1570,9 +1575,12 @@ async def check_join_callback(event):
     if is_owner(user_id) or await check_force_join(user_id):
         await event.answer("✅ Access Granted!")
         text = (
-            "✅ <b>Verified!</b>\n\n"
-            "Welcome! You can now use the bot.\n"
-            "Use /start to get started 🚀"
+            "⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
+            "✅  <b>𝗔𝗖𝗖𝗘𝗦𝗦  𝗚𝗥𝗔𝗡𝗧𝗘𝗗</b>  ✅\n"
+            "⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
+            "◆  Verification complete\n"
+            "◆  Engine is ready\n\n"
+            "Tap  /start  to launch ⚡"
         )
         await event.edit(text, parse_mode='html')
     else:
@@ -1581,31 +1589,30 @@ async def check_join_callback(event):
 @bot.on(events.NewMessage(pattern='/start'))
 async def start(event):
     user_id = event.sender_id
-    # Boot animation
-    anim = await event.reply("⚡", parse_mode='html')
+    anim = await event.reply("▓", parse_mode='html')
+    await asyncio.sleep(0.35)
+    await anim.edit("▓▓  <b>𝗕𝗢𝗢𝗧𝗜𝗡𝗚</b>  <code>[ ░░░░░░░░░░ ]</code>", parse_mode='html')
     await asyncio.sleep(0.4)
-    await anim.edit("⚡ 𝗦𝘆𝘀𝘁𝗲𝗺 𝗜𝗻𝗶𝘁𝗶𝗮𝗹𝗶𝘇𝗶𝗻𝗴...")
-    await asyncio.sleep(0.5)
-    await anim.edit("⚡ 𝗦𝘆𝘀𝘁𝗲𝗺 𝗜𝗻𝗶𝘁𝗶𝗮𝗹𝗶𝘇𝗶𝗻𝗴...\n🔗 𝗖𝗼𝗻𝗻𝗲𝗰𝘁𝗶𝗻𝗴 𝘁𝗼 𝗚𝗮𝘁𝗲𝘄𝗮𝘆...")
-    await asyncio.sleep(0.5)
-    await anim.edit("⚡ 𝗦𝘆𝘀𝘁𝗲𝗺 𝗜𝗻𝗶𝘁𝗶𝗮𝗹𝗶𝘇𝗶𝗻𝗴...\n🔗 𝗖𝗼𝗻𝗻𝗲𝗰𝘁𝗶𝗻𝗴 𝘁𝗼 𝗚𝗮𝘁𝗲𝘄𝗮𝘆...\n✅ 𝗥𝗲𝗮𝗱𝘆!")
+    await anim.edit("▓▓▓  <b>𝗦𝗬𝗦𝗧𝗘𝗠</b>  <code>[ ████░░░░░░ ]</code>\n◈  Connecting to Gateway...", parse_mode='html')
     await asyncio.sleep(0.4)
+    await anim.edit("▓▓▓▓  <b>𝗢𝗡𝗟𝗜𝗡𝗘</b>  <code>[ ██████████ ]</code>\n◈  Gateway Linked ✅\n◈  Engine Ready ✅", parse_mode='html')
+    await asyncio.sleep(0.45)
     premium = is_premium(user_id)
-    status_line = "✅ <b>Premium</b>" if premium else "🔒 <b>Free</b> — use /redeem to activate"
+    status_line = "💎 <b>PREMIUM</b>  ·  Full Access" if premium else "🔒 <b>FREE</b>  ·  /redeem to unlock"
     welcome = (
-        "🆆🆃🅱 <b>Welcome to Shopiix Checker</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "⭐ High-speed Shopify gateway checker\n"
-        "✅ Supports all proxy formats\n"
-        "🪐 Multi-site rotation with retry logic\n"
-        "🔑 Key-based premium access system\n\n"
-        "🔥 Use the menu below to get started:\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 Status: {status_line}"
+        "⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
+        "⚡  <b>𝗦 𝗛 𝗢 𝗣 𝗜 𝗜 𝗫</b>  ⚡\n"
+        "⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
+        "◆  Shopify Gateway Engine\n"
+        "◆  Multi-Site Rotation  \n"
+        "◆  Real-Time BIN Intelligence\n"
+        "◆  Premium Key Access System\n\n"
+        "〔 𝗦𝗧𝗔𝗧𝗨𝗦 〕\n"
+        f"<blockquote>{status_line}</blockquote>"
     )
     buttons = [
-        [Button.inline("💳  C M D S", b"menu_cmds"), Button.inline("🔧  Set Proxy", b"menu_proxy")],
-        [Button.inline("👤  My Profile", b"menu_profile")],
+        [Button.inline("💳  C H E C K E R", b"menu_cmds"), Button.inline("🔧  P R O X Y", b"menu_proxy")],
+        [Button.inline("👤  P R O F I L E", b"menu_profile")],
     ]
     await anim.edit(premium_emoji(welcome), buttons=buttons, parse_mode='html')
 
@@ -1731,7 +1738,7 @@ async def single_cc_check(event):
 
     card = cards[0]
     status_msg = await event.reply(
-        premium_emoji(f"⏳ <b>Checking...</b>\n<code>{card}</code>"),
+        premium_emoji(f"◈  <b>𝗦𝗖𝗔𝗡𝗡𝗜𝗡𝗚</b>  <code>[ ░░░░░░░░░░ ]</code>\n<code>{card}</code>"),
         parse_mode='html'
     )
     try:
@@ -1742,29 +1749,28 @@ async def single_cc_check(event):
             brand, bin_type, level, bank, country, flag = 'Unknown', 'Unknown', 'Unknown', 'Unknown', 'Unknown', ''
 
         if result['status'] == 'Charged':
-            status_emoji = "✅"
-            status_text = "𝐂𝐡𝐚𝐫𝐠𝐞𝐝"
+            status_emoji = "💎"
+            status_text = "𝗖𝗛𝗔𝗥𝗚𝗘𝗗"
         elif result['status'] == 'Live':
             status_emoji = "🔥"
-            status_text = "𝐋𝐢𝐯𝐞"
+            status_text = "𝗔𝗣𝗣𝗥𝗢𝗩𝗘𝗗"
         else:
             status_emoji = "❌"
-            status_text = "𝐃𝐞𝐚𝐝"
+            status_text = "𝗗𝗘𝗖𝗟𝗜𝗡𝗘𝗗"
 
         final_resp = (
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"{status_emoji} <b>{status_text}</b>\n"
-            f"━━━━━━━━━━━━━━━━━━\n\n"
-            f"💳 <code>{result['card']}</code>\n"
-            f"📝 <i>{result['message'][:150]}</i>\n"
-            f"🌐 {result.get('gateway', 'Unknown')}  ·  💰 {result.get('price', '-')}\n\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"💠 <b>BIN Info</b>\n"
-            f"<blockquote>{brand} · {bin_type} · {level}\n"
-            f"{bank}\n"
-            f"{country} {flag}</blockquote>\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f'🤖 <b>Bot By:</b> <a href="tg://user?id=5895386985">Aizen</a>'
+            f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
+            f"{status_emoji}  <b>{status_text}</b>  {status_emoji}\n"
+            f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
+            f"💳 <b>𝗖𝗔𝗥𝗗</b>   ▸  <code>{result['card']}</code>\n"
+            f"◈  <b>𝗥𝗘𝗦𝗣</b>   ▸  <i>{result['message'][:120]}</i>\n"
+            f"🌐 <b>𝗚𝗪</b>     ▸  {result.get('gateway', 'Unknown')}\n"
+            f"💰 <b>𝗣𝗥𝗜𝗖𝗘</b>  ▸  <code>{result.get('price', '—')}</code>\n\n"
+            f"〔 𝗕𝗜𝗡  𝗜𝗡𝗧𝗘𝗟𝗟𝗜𝗚𝗘𝗡𝗖𝗘 〕\n"
+            f"<blockquote>◆ {brand}  ·  {bin_type}  ·  {level}\n"
+            f"◆ {bank}\n"
+            f"◆ {country}  {flag}</blockquote>\n\n"
+            f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>'
         )
         await status_msg.edit(premium_emoji(final_resp), parse_mode='html')
     except Exception as e:
