@@ -1173,29 +1173,12 @@ active_sessions = {}
 pending_chk_sessions = {}  # user_id -> {cards, file_reply_id, status_msg_id, price_filter, selected}
 
 _DEAD_INDICATORS = (
-    'receipt id is empty', 'handle is empty', 'product id is empty',
-    'tax amount is empty', 'payment method identifier is empty',
-    'invalid url', 'error in 1st req', 'error in 1 req',
-    'cloudflare', 'connection failed', 'timed out',
-    'access denied', 'tlsv1 alert', 'ssl routines',
-    'could not resolve', 'domain name not found',
-    'name or service not known', 'openssl ssl_connect',
-    'empty reply from server', 'httperror504', 'http error',
-    'timeout', 'unreachable', 'ssl error',
-    '502', '503', '504', 'bad gateway', 'service unavailable',
-    'gateway timeout', 'network error', 'connection reset',
-    'failed to detect product', 'failed to create checkout',
-    'failed to tokenize card', 'failed to get proposal data',
-    'submit rejected', 'handle error', 'http 404',
-    'delivery_delivery_line_detail_changed', 'delivery_address2_required',
-    'url rejected', 'malformed input', 'amount_too_small', 'amount too small',
-    'site dead', 'captcha_required', 'captcha required', 'site errors',
-    'all products sold out', 'no_session_token', 'tokenize_fail',
-    'not shopify', 'no products', 'no valid products', 'proxy error',
-    'invalid proxy', 'cart failed', 'checkout page failed',
-    'failed to get session token', 'session is null', 'negotiate returned null',
-    'no valid payment method', 'checkpoint denied', 'throttled',
-    'site not supported', 'requires login',
+    # True site-death errors only — proxy/network/timeout errors excluded
+    'site not supported', 'requires login', 'site requires login',
+    'not shopify', 'no products found', 'no valid products',
+    'all products sold out', 'failed to detect product',
+    'http 404', 'domain name not found', 'name or service not known',
+    'could not resolve', 'invalid url',
 )
 
 def get_file_lines(filepath):
