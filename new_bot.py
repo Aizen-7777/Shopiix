@@ -1415,30 +1415,29 @@ async def update_progress(user_id, message_id, results, current_attempt_count):
     if last_card_raw:
         parts = last_card_raw.split('|')
         num = parts[0]
-        masked = num[:6] + '*' * (len(num) - 10) + num[-4:] if len(num) > 10 else num
-        last_card_display = '|'.join([masked] + parts[1:]) if len(parts) > 1 else masked
+        masked = num[:6] + '*' * max(0, len(num) - 10) + num[-4:] if len(num) > 10 else num
+        last_card_display = masked
     else:
         last_card_display = '—'
     last_resp = results.get('last_response', '—')
-    if len(last_resp) > 30:
-        last_resp = last_resp[:28] + '...'
-    progress_text = (
-        f"<b>⚡💳 ㅤ#Shopiix  💳⚡</b>\n"
-        f"<b>─────────────────</b>\n"
-        f"💳 <b>Card</b> → <code>{last_card_display}</code>\n"
-        f"📝 <b>Response</b> → <i>{last_resp}</i>\n"
-        f"<b>─────────────────</b>\n"
-        f"💎 <b>Charge</b> → [{len(results['charged'])}]\n"
-        f"🔥 <b>Approve</b> → [{len(results['live'])}]\n"
-        f"❌ <b>Decline</b> → [{len(results['dead'])}]\n"
-        f"<b>─────────────────</b>\n"
-        f"✅ <b>Progress</b> → [{current_attempt_count}/{results['total']}]\n"
-        f"⏱️ <b>Time</b> → {hours}h {minutes}m {seconds}s\n"
-        f"<b>─────────────────</b>"
-    )
-    buttons = [[Button.inline("🛑 Stop", b"stop")]]
+    if len(last_resp) > 28:
+        last_resp = last_resp[:26] + '...'
+    charged = len(results['charged'])
+    live = len(results['live'])
+    dead = len(results['dead'])
+    header = premium_emoji("⚡ <b>#Shopiix</b> ⚡\n🔄 <i>Cooking CCs One by One...</i>")
+    buttons = [
+        [Button.inline(f"💳  Card  →  {last_card_display}", b"noop")],
+        [Button.inline(f"📝  Response  →  {last_resp}", b"noop")],
+        [Button.inline(f"💎  CHARGE  →  [ {charged} ]", b"noop")],
+        [Button.inline(f"🔥  Approve  →  [ {live} ]", b"noop")],
+        [Button.inline(f"❌  Decline  →  [ {dead} ]", b"noop")],
+        [Button.inline(f"✅  Progress  →  [ {current_attempt_count} / {results['total']} ]", b"noop")],
+        [Button.inline(f"⏱  Time  →  {hours}h {minutes}m {seconds}s", b"noop")],
+        [Button.inline("⛔  Stop", b"stop")],
+    ]
     try:
-        await bot.edit_message(user_id, message_id, premium_emoji(progress_text), buttons=buttons, parse_mode='html')
+        await bot.edit_message(user_id, message_id, header, buttons=buttons, parse_mode='html')
     except Exception:
         pass
 
@@ -2417,6 +2416,10 @@ async def stop_handler(event):
         del active_sessions[session_key]
         await event.answer(premium_emoji("🛑 Stopped"))
         await event.edit(premium_emoji("❌ <b>Checking stopped by user.</b>"), parse_mode='html')
+
+@bot.on(events.CallbackQuery(pattern=b"noop"))
+async def noop_handler(event):
+    await event.answer()
 
 @bot.on(events.NewMessage(pattern=r'^/genkey'))
 async def genkey_command(event):
