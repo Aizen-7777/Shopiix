@@ -1179,7 +1179,13 @@ _DEAD_INDICATORS = (
     'all products sold out', 'failed to detect product',
     'http 404', 'domain name not found', 'name or service not known',
     'could not resolve', 'invalid url',
+    # Sites that don't support card payments at all
+    'no valid payment method found',
+    'payment method not available',
+    'cart failed with status 403',
 )
+
+_rate_limited_sites = {}  # url -> expiry timestamp (429 rate limit, temporary)
 
 def get_file_lines(filepath):
     if not os.path.exists(filepath):
@@ -1288,6 +1294,9 @@ async def check_card_embedded(card, site, proxy):
             return {'status': 'Dead', 'message': 'Invalid card format', 'card': card, 'gateway': 'Unknown', 'price': '-'}
         cc, mes, ano, cvv = parts
         success, message, gateway, price, currency = await process_card(cc, mes, ano, cvv, site_url, variant_id=variant_id, proxy_str=proxy)
+        if 'cart failed with status 429' in message.lower():
+            _rate_limited_sites[site_url.rstrip('/')] = time.time() + 300
+            return {'status': 'Site Error', 'message': message, 'card': card, 'retry': True, 'gateway': gateway, 'price': price}
         status = classify_result(success, message)
         if status == 'SiteError':
             asyncio.create_task(auto_remove_dead_site(site_url))
@@ -2253,7 +2262,11 @@ async def _run_bulk_check(user_id, event, pending):
                 except asyncio.QueueEmpty:
                     break
                 current_proxies = load_proxies(user_id)
-                live_sites = [s for s in filtered_sites if s['url'].rstrip('/') not in _dead_sites_cache]
+                now = time.time()
+                _rate_limited_sites_expired = [k for k, v in _rate_limited_sites.items() if v <= now]
+                for k in _rate_limited_sites_expired:
+                    del _rate_limited_sites[k]
+                live_sites = [s for s in filtered_sites if s['url'].rstrip('/') not in _dead_sites_cache and s['url'].rstrip('/') not in _rate_limited_sites]
                 active_sites = live_sites if live_sites else filtered_sites
                 if not active_sites or not current_proxies:
                     break
