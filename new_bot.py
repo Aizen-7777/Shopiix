@@ -2097,10 +2097,18 @@ async def get_site_command(event):
     if not sites:
         await event.reply(premium_emoji("❌ No sites loaded."), parse_mode='html')
         return
-    lines = [premium_emoji(f"🌐 <b>Sites ({len(sites)})</b>\n━━━━━━━━━━━━━━━━━━\n\n")]
+    content = f"⚡ Shopiix Sites — Total: {len(sites)}\n"
+    content += "=" * 50 + "\n\n"
     for i, s in enumerate(sites, 1):
-        lines.append(f"{i}. <code>{s['url']}</code> · 💰 {s.get('price', '-')}\n")
-    await event.reply(''.join(lines), parse_mode='html')
+        content += f"{i}. {s['url']} | Price: {s.get('price', '-')} | Variant: {s.get('variant_id', '-')}\n"
+    filename = f"sites_{len(sites)}.txt"
+    async with aiofiles.open(filename, 'w') as f:
+        await f.write(content)
+    await bot.send_file(user_id, filename, caption=premium_emoji(f"🌐 <b>{len(sites)} sites</b>"), parse_mode='html')
+    try:
+        os.remove(filename)
+    except Exception:
+        pass
 
 
 def _price_filter_buttons(selected):
