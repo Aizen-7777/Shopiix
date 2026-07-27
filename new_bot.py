@@ -1141,13 +1141,12 @@ API_HASH  = os.environ.get('TG_API_HASH', '868242502bea6a1e41b2ce46001d0580')
 BOT_TOKEN = os.environ.get('TG_BOT_TOKEN', '8692888647:AAEkzd5UpJLhAWSrO0BIS5B1cH6CQWmMyPU')
 OWNER_ID  = int(os.environ.get('TG_OWNER_ID', '5895386985'))
 
-DATA_DIR = os.environ.get('DATA_DIR', '/data' if os.path.isdir('/data') else '.')
-PREMIUM_FILE = os.path.join(DATA_DIR, 'premium.txt')
-SITES_FILE = os.path.join(DATA_DIR, 'sites.txt')
-KEYS_FILE = os.path.join(DATA_DIR, 'keys.json')
+PREMIUM_FILE = 'premium.txt'
+SITES_FILE = 'sites.txt'
+KEYS_FILE = 'keys.json'
 
 def get_proxy_file(user_id):
-    return os.path.join(DATA_DIR, f'proxy_{user_id}.txt')
+    return f'proxy_{user_id}.txt'
 
 # =========== KEY SYSTEM ===============
 def _load_keys():
