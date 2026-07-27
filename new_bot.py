@@ -1,5 +1,8 @@
 # =========== IMPORTS ===============
 from telethon import TelegramClient, events, Button
+from telethon.errors import UserNotParticipantError, ChannelPrivateError
+from telethon.tl.functions.channels import GetParticipantRequest
+from telethon.tl.functions.messages import CheckChatInviteRequest
 import asyncio
 import aiohttp
 import aiofiles
@@ -1172,6 +1175,55 @@ bot = TelegramClient('shopiix_bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 active_sessions = {}
 pending_chk_sessions = {}  # user_id -> {cards, file_reply_id, status_msg_id, price_filter, selected}
 
+# =========== FORCE JOIN CONFIG ===============
+FORCE_JOIN_CHANNEL_LINK = 'https://t.me/+mhfCyK5E5vMzY2Q0'
+FORCE_JOIN_GROUP_LINK   = 'https://t.me/+TReaIahsn-0yNDZk'
+FORCE_JOIN_CHANNEL_HASH = 'mhfCyK5E5vMzY2Q0'
+FORCE_JOIN_GROUP_HASH   = 'TReaIahsn-0yNDZk'
+_force_join_ids = {}  # 'channel': id, 'group': id
+
+async def resolve_force_join_ids():
+    for key, hash_ in [('channel', FORCE_JOIN_CHANNEL_HASH), ('group', FORCE_JOIN_GROUP_HASH)]:
+        try:
+            result = await bot(CheckChatInviteRequest(hash_))
+            chat = getattr(result, 'chat', None)
+            if chat:
+                _force_join_ids[key] = chat.id
+        except Exception:
+            pass
+
+async def check_force_join(user_id):
+    if not _force_join_ids:
+        return True
+    for chat_id in _force_join_ids.values():
+        try:
+            await bot(GetParticipantRequest(chat_id, user_id))
+        except UserNotParticipantError:
+            return False
+        except Exception:
+            pass
+    return True
+
+async def show_force_join_msg(event):
+    text = (
+        "🔒 <b>Access Locked</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "You must join <b>both</b> our channel &amp; group to\n"
+        "use this bot.\n\n"
+        "1️⃣ <b>Join the Channel</b>\n"
+        "2️⃣ <b>Join the Group</b>\n"
+        "3️⃣ Tap ✅ <b>I Joined</b> below"
+    )
+    buttons = [
+        [Button.url("📣  Join Channel", FORCE_JOIN_CHANNEL_LINK)],
+        [Button.url("💎  Join Group",   FORCE_JOIN_GROUP_LINK)],
+        [Button.inline("✅  I Joined",  b"check_join")],
+    ]
+    try:
+        await event.reply(text, buttons=buttons, parse_mode='html')
+    except Exception:
+        pass
+
 _DEAD_INDICATORS = (
     # True site-death errors only — proxy/network/timeout errors excluded
     'site not supported', 'requires login', 'site requires login',
@@ -1502,6 +1554,29 @@ async def send_final_results(user_id, results):
         pass
 
 # =========== BOT HANDLERS ===============
+
+@bot.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
+async def force_join_gate(event):
+    user_id = event.sender_id
+    if is_owner(user_id):
+        return
+    if not await check_force_join(user_id):
+        await show_force_join_msg(event)
+        raise events.StopPropagation
+
+@bot.on(events.CallbackQuery(pattern=b"check_join"))
+async def check_join_callback(event):
+    user_id = event.sender_id
+    if is_owner(user_id) or await check_force_join(user_id):
+        await event.answer("✅ Access Granted!")
+        text = (
+            "✅ <b>Verified!</b>\n\n"
+            "Welcome! You can now use the bot.\n"
+            "Use /start to get started 🚀"
+        )
+        await event.edit(text, parse_mode='html')
+    else:
+        await event.answer("❌ Please join both channel & group first!", alert=True)
 
 @bot.on(events.NewMessage(pattern='/start'))
 async def start(event):
@@ -2549,5 +2624,10 @@ async def list_keys_command(event):
             lines.append(f"  ...and {len(used) - 10} more\n")
     await event.reply(''.join(lines), parse_mode='html')
 
-print("✅ Shopiix Bot started successfully!")
-bot.run_until_disconnected()
+async def _on_start():
+    await resolve_force_join_ids()
+    print("✅ Shopiix Bot started successfully!")
+
+with bot:
+    bot.loop.run_until_complete(_on_start())
+    bot.run_until_disconnected()
