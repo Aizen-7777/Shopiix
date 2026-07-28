@@ -14,6 +14,7 @@ import re
 import logging
 from datetime import datetime
 from urllib.parse import urlparse
+from stripe_auth import register_handlers as _stripe_register
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -2259,8 +2260,8 @@ async def check_command(event):
     if not cards:
         await wait_msg.edit(premium_emoji("❌ No valid cards found in file."), parse_mode='html')
         return
-    if len(cards) > 500000:
-        cards = cards[:500000]
+    if not is_owner(user_id) and len(cards) > 50000:
+        cards = cards[:50000]
     # Store pending state and show price filter
     pending_chk_sessions[user_id] = {
         'cards': cards,
@@ -2642,6 +2643,8 @@ async def list_keys_command(event):
         if len(used) > 10:
             lines.append(f"  ...and {len(used) - 10} more\n")
     await event.reply(''.join(lines), parse_mode='html')
+
+_stripe_register(bot, is_premium, is_owner, load_proxies)
 
 async def _on_start():
     await resolve_force_join_ids()
