@@ -1587,7 +1587,7 @@ async def menu_cmds_handler(event):
         [Button.inline("❓  G A T E S", b"cmds_gates"), Button.inline("🎯  H I T T E R", b"cmds_hitter")],
         [Button.inline("🔄  P R O X Y", b"cmds_proxy"), Button.inline("🔧  T O O L S", b"cmds_tools")],
     ]
-    await event.reply(text, buttons=buttons, parse_mode='html')
+    await event.edit(text, buttons=buttons, parse_mode='html')
 
 @bot.on(events.CallbackQuery(pattern=b"cmds_gates"))
 async def cmds_gates_handler(event):
@@ -1604,7 +1604,8 @@ async def cmds_gates_handler(event):
         )
     else:
         text = "❌ <b>Owner only.</b>"
-    await event.reply(text, parse_mode='html')
+    back = [[Button.inline("« Back", b"menu_cmds")]]
+    await event.edit(text, buttons=back, parse_mode='html')
 
 @bot.on(events.CallbackQuery(pattern=b"cmds_hitter"))
 async def cmds_hitter_handler(event):
@@ -1615,7 +1616,8 @@ async def cmds_hitter_handler(event):
         "<blockquote>/cc <code>card|mm|yy|cvv</code> — Single check\n"
         "/chk — Bulk check (reply to .txt file)</blockquote>"
     )
-    await event.reply(text, parse_mode='html')
+    back = [[Button.inline("« Back", b"menu_cmds")]]
+    await event.edit(text, buttons=back, parse_mode='html')
 
 @bot.on(events.CallbackQuery(pattern=b"cmds_proxy"))
 async def cmds_proxy_handler(event):
@@ -1630,7 +1632,8 @@ async def cmds_proxy_handler(event):
         "/clearproxy — Clear all\n"
         "/getproxy — List proxies</blockquote>"
     )
-    await event.reply(text, parse_mode='html')
+    back = [[Button.inline("« Back", b"menu_cmds")]]
+    await event.edit(text, buttons=back, parse_mode='html')
 
 @bot.on(events.CallbackQuery(pattern=b"cmds_tools"))
 async def cmds_tools_handler(event):
@@ -1648,7 +1651,8 @@ async def cmds_tools_handler(event):
         "<blockquote>/redeem <code>KEY</code> — Activate premium</blockquote>"
         + owner_section
     )
-    await event.reply(text, parse_mode='html')
+    back = [[Button.inline("« Back", b"menu_cmds")]]
+    await event.edit(text, buttons=back, parse_mode='html')
 
 @bot.on(events.CallbackQuery(pattern=b"menu_proxy"))
 async def menu_proxy_handler(event):
