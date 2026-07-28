@@ -345,7 +345,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         if not cards:
             await wait_msg.edit("❌ No valid cards found in file.", parse_mode='html')
             return
-        if len(cards) > MAX_CARDS:
+        if not is_owner_fn(user_id) and len(cards) > MAX_CARDS:
             cards = cards[:MAX_CARDS]
 
         proxies = load_proxies_fn(user_id)
