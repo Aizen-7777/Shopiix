@@ -1591,33 +1591,41 @@ async def menu_cmds_handler(event):
 
 @bot.on(events.CallbackQuery(pattern=b"cmds_gates"))
 async def cmds_gates_handler(event):
-    user_id = event.sender_id
-    await event.answer()
-    if is_owner(user_id):
-        text = (
-            "❓ <b>G A T E S</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n\n"
-            "<blockquote>/addsite <code>url</code> — Add site\n"
-            "/getsite — List all sites\n"
-            "/site — Clean dead sites\n"
-            "/rm <code>url</code> — Remove site</blockquote>"
-        )
-    else:
-        text = "❌ <b>Owner only.</b>"
-    back = [[Button.inline("« Back", b"menu_cmds")]]
-    await event.edit(text, buttons=back, parse_mode='html')
-
-@bot.on(events.CallbackQuery(pattern=b"cmds_hitter"))
-async def cmds_hitter_handler(event):
     await event.answer()
     text = (
-        "🎯 <b>H I T T E R</b>\n"
+        "⚙️ <b>F U N C T I O N S</b> 💣\n\n"
+        "➤ <i>Gate System</i>  ✅\n"
+        "➤ <i>Proxy System</i>  ✅\n"
+        "➤ <i>Checkout Hitter</i>  ✅\n\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "▼ <i>Navigation Menu</i> ▼"
+    )
+    buttons = [
+        [Button.inline("🛒  S H O P I F Y", b"gate_shopify")],
+        [Button.inline("💳  S T R I P E  A U T H  —  soon", b"gate_stripe")],
+        [Button.inline("« B A C K", b"menu_cmds")],
+    ]
+    await event.edit(text, buttons=buttons, parse_mode='html')
+
+@bot.on(events.CallbackQuery(pattern=b"gate_shopify"))
+async def gate_shopify_handler(event):
+    await event.answer()
+    text = (
+        "🛒 <b>S H O P I F Y</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
         "<blockquote>/cc <code>card|mm|yy|cvv</code> — Single check\n"
         "/chk — Bulk check (reply to .txt file)</blockquote>"
     )
-    back = [[Button.inline("« Back", b"menu_cmds")]]
+    back = [[Button.inline("« B A C K", b"cmds_gates")]]
     await event.edit(text, buttons=back, parse_mode='html')
+
+@bot.on(events.CallbackQuery(pattern=b"gate_stripe"))
+async def gate_stripe_handler(event):
+    await event.answer("🚧 Coming Soon!", alert=True)
+
+@bot.on(events.CallbackQuery(pattern=b"cmds_hitter"))
+async def cmds_hitter_handler(event):
+    await event.answer("🚧 Coming Soon!", alert=True)
 
 @bot.on(events.CallbackQuery(pattern=b"cmds_proxy"))
 async def cmds_proxy_handler(event):
