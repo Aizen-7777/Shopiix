@@ -1577,36 +1577,78 @@ async def start(event):
 
 @bot.on(events.CallbackQuery(pattern=b"menu_cmds"))
 async def menu_cmds_handler(event):
+    await event.answer()
+    text = (
+        "⚙️ <b>C M D S</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "Choose a category below:"
+    )
+    buttons = [
+        [Button.inline("❓  G A T E S", b"cmds_gates"), Button.inline("🎯  H I T T E R", b"cmds_hitter")],
+        [Button.inline("🔄  P R O X Y", b"cmds_proxy"), Button.inline("🔧  T O O L S", b"cmds_tools")],
+    ]
+    await event.reply(text, buttons=buttons, parse_mode='html')
+
+@bot.on(events.CallbackQuery(pattern=b"cmds_gates"))
+async def cmds_gates_handler(event):
     user_id = event.sender_id
     await event.answer()
-    owner_cmds = (
-        "\n\n🌐 <b>Sites</b> <i>(owner)</i>\n"
-        "<blockquote>/addsite <code>url</code> — Add site\n"
-        "/getsite — List sites\n"
-        "/site — Clean dead sites\n"
-        "/rm <code>url</code> — Remove site</blockquote>\n\n"
-        "🔑 <b>Keys</b> <i>(owner)</i>\n"
-        "<blockquote>/genkey [n] [Xd] — Generate keys\n"
-        "/keys — List all keys</blockquote>"
-    ) if is_owner(user_id) else ""
+    if is_owner(user_id):
+        text = (
+            "❓ <b>G A T E S</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "<blockquote>/addsite <code>url</code> — Add site\n"
+            "/getsite — List all sites\n"
+            "/site — Clean dead sites\n"
+            "/rm <code>url</code> — Remove site</blockquote>"
+        )
+    else:
+        text = "❌ <b>Owner only.</b>"
+    await event.reply(text, parse_mode='html')
+
+@bot.on(events.CallbackQuery(pattern=b"cmds_hitter"))
+async def cmds_hitter_handler(event):
+    await event.answer()
     text = (
-        "💠 <b>All Commands</b>\n"
+        "🎯 <b>H I T T E R</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
-        "💳 <b>Cards</b>\n"
         "<blockquote>/cc <code>card|mm|yy|cvv</code> — Single check\n"
-        "/chk — Bulk check (reply to .txt)</blockquote>\n\n"
-        "🔄 <b>Proxies</b>\n"
+        "/chk — Bulk check (reply to .txt file)</blockquote>"
+    )
+    await event.reply(text, parse_mode='html')
+
+@bot.on(events.CallbackQuery(pattern=b"cmds_proxy"))
+async def cmds_proxy_handler(event):
+    await event.answer()
+    text = (
+        "🔄 <b>P R O X Y</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
         "<blockquote>/addproxy — Add proxies\n"
         "/proxy — Check & clean dead\n"
         "/chkproxy — Test a proxy\n"
         "/rmproxy — Remove proxy\n"
         "/clearproxy — Clear all\n"
         "/getproxy — List proxies</blockquote>"
-        + owner_cmds +
-        "\n\n🎟️ <b>Access</b>\n"
-        "<blockquote>/redeem <code>KEY</code> — Activate premium</blockquote>"
     )
-    await event.reply(premium_emoji(text), parse_mode='html')
+    await event.reply(text, parse_mode='html')
+
+@bot.on(events.CallbackQuery(pattern=b"cmds_tools"))
+async def cmds_tools_handler(event):
+    user_id = event.sender_id
+    await event.answer()
+    owner_section = (
+        "\n\n🔑 <b>Keys</b> <i>(owner)</i>\n"
+        "<blockquote>/genkey [n] [Xd] — Generate keys\n"
+        "/keys — List all keys</blockquote>"
+    ) if is_owner(user_id) else ""
+    text = (
+        "🔧 <b>T O O L S</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "🎟️ <b>Access</b>\n"
+        "<blockquote>/redeem <code>KEY</code> — Activate premium</blockquote>"
+        + owner_section
+    )
+    await event.reply(text, parse_mode='html')
 
 @bot.on(events.CallbackQuery(pattern=b"menu_proxy"))
 async def menu_proxy_handler(event):
