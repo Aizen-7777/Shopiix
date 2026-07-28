@@ -1571,8 +1571,7 @@ async def start(event):
         f"<blockquote>{status_line}</blockquote>"
     )
     buttons = [
-        [Button.inline("💳  C H E C K E R", b"menu_cmds"), Button.inline("🔧  P R O X Y", b"menu_proxy")],
-        [Button.inline("👤  P R O F I L E", b"menu_profile")],
+        [Button.inline("⚙️  C M D S", b"menu_cmds"), Button.inline("👤  P R O F I L E", b"menu_profile")],
     ]
     await anim.edit(premium_emoji(welcome), buttons=buttons, parse_mode='html')
 
