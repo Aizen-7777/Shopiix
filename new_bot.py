@@ -1147,6 +1147,25 @@ FORCE_JOIN_CHANNEL_HASH = 'mhfCyK5E5vMzY2Q0'
 FORCE_JOIN_GROUP_HASH   = 'TReaIahsn-0yNDZk'
 _force_join_ids = {}  # 'channel': id, 'group': id
 
+_FJ_VERIFIED_FILE = 'force_join_verified.json'
+_force_join_verified: set = set()
+
+def _fj_load():
+    global _force_join_verified
+    try:
+        with open(_FJ_VERIFIED_FILE) as f:
+            _force_join_verified = set(json.load(f))
+    except Exception:
+        _force_join_verified = set()
+
+def _fj_mark(user_id):
+    _force_join_verified.add(user_id)
+    try:
+        with open(_FJ_VERIFIED_FILE, 'w') as f:
+            json.dump(list(_force_join_verified), f)
+    except Exception:
+        pass
+
 async def resolve_force_join_ids():
     for key, hash_ in [('channel', FORCE_JOIN_CHANNEL_HASH), ('group', FORCE_JOIN_GROUP_HASH)]:
         try:
@@ -1158,8 +1177,13 @@ async def resolve_force_join_ids():
             pass
 
 async def check_force_join(user_id):
-    if not _force_join_ids:
+    # Already verified (clicked I Joined before)
+    if user_id in _force_join_verified:
         return True
+    # IDs not resolved (bot not in channels) — block until they click I Joined
+    if not _force_join_ids:
+        return False
+    # Verify via Telegram API
     for chat_id in _force_join_ids.values():
         try:
             await bot(GetParticipantRequest(chat_id, user_id))
@@ -1533,7 +1557,27 @@ async def force_join_gate(event):
 @bot.on(events.CallbackQuery(pattern=b"check_join"))
 async def check_join_callback(event):
     user_id = event.sender_id
-    if is_owner(user_id) or await check_force_join(user_id):
+    granted = False
+    if is_owner(user_id):
+        granted = True
+    elif not _force_join_ids:
+        # Can't verify via Telegram (bot not admin in channels) — grant on click
+        granted = True
+    else:
+        # Check actual Telegram membership
+        all_joined = True
+        for chat_id in _force_join_ids.values():
+            try:
+                await bot(GetParticipantRequest(chat_id, user_id))
+            except UserNotParticipantError:
+                all_joined = False
+                break
+            except Exception:
+                pass
+        granted = all_joined
+
+    if granted:
+        _fj_mark(user_id)
         await event.answer("✅ Access Granted!")
         text = (
             "⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
@@ -2647,6 +2691,7 @@ async def list_keys_command(event):
 _stripe_register(bot, is_premium, is_owner, load_proxies)
 
 async def _on_start():
+    _fj_load()
     await resolve_force_join_ids()
     print("✅ Shopiix Bot started successfully!")
 
