@@ -1647,7 +1647,7 @@ async def cmds_gates_handler(event):
     )
     buttons = [
         [Button.inline("🛒  S H O P I F Y", b"gate_shopify")],
-        [Button.inline("💳  S T R I P E  A U T H  —  soon", b"gate_stripe")],
+        [Button.inline("💳  S T R I P E  A U T H", b"gate_stripe")],
         [Button.inline("« B A C K", b"menu_cmds")],
     ]
     await event.edit(text, buttons=buttons, parse_mode='html')
@@ -1666,7 +1666,15 @@ async def gate_shopify_handler(event):
 
 @bot.on(events.CallbackQuery(pattern=b"gate_stripe"))
 async def gate_stripe_handler(event):
-    await event.answer("🚧 Coming Soon!", alert=True)
+    await event.answer()
+    text = (
+        "💳 <b>S T R I P E  A U T H</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "<blockquote>/st <code>card|mm|yy|cvv</code> — Single check\n"
+        "/stxt — Bulk check (reply to .txt file)</blockquote>"
+    )
+    back = [[Button.inline("« B A C K", b"cmds_gates")]]
+    await event.edit(text, buttons=back, parse_mode='html')
 
 @bot.on(events.CallbackQuery(pattern=b"cmds_hitter"))
 async def cmds_hitter_handler(event):
