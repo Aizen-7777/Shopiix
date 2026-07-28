@@ -1100,44 +1100,8 @@ async def process_card(cc, mes, ano, cvv, site_url, variant_id=None, proxy_str=N
         return False, f"Error Processing Card: {str(e)}", gateway, total_price, currency
 
 # =========== BOT CONFIGURATION ===============
-PREMIUM_EMOJI_IDS = {
-    "✅": "6023660820544623088",
-    "🔥": "5999340396432333728",
-    "❌": "6037570896766438989",
-    "⚡": "6026367225466720832",
-    "💳": "5971944878815317190",
-    "💠": "5971837723676249096",
-    "📝": "6023660820544623088",
-    "🌐": "6026367225466720832",
-    "🎯": "5974235702701853774",
-    "🤖": "6057466460886799210",
-    "🤵": "4949560993840629085",
-    "💰": "5971944878815317190",
-    "⏸️": "6001440193058444284",
-    "▶️": "6285315214673975495",
-    "🛑": "5420323339723881652",
-    "📊": "5971837723676249096",
-    "📦": "6066395745139824604",
-    "📋": "5974235702701853774",
-    "🔄": "5971837723676249096",
-    "⏳": "5971837723676249096",
-    "🚀": "6282977077427702833",
-    "⚠️": "5420323339723881652",
-    "💎": "6023660820544623088",
-}
-
 def premium_emoji(text):
-    if not text:
-        return text
-    placeholders = []
-    result = text
-    for i, (emoji, doc_id) in enumerate(PREMIUM_EMOJI_IDS.items()):
-        placeholder = f"\x00PE{i:02d}\x00"
-        placeholders.append((placeholder, doc_id, emoji))
-        result = result.replace(emoji, placeholder)
-    for placeholder, doc_id, emoji in placeholders:
-        result = result.replace(placeholder, f'<tg-emoji emoji-id="{doc_id}">{emoji}</tg-emoji>')
-    return result
+    return text
 
 API_ID    = int(os.environ.get('TG_API_ID', '32253547'))
 API_HASH  = os.environ.get('TG_API_HASH', '868242502bea6a1e41b2ce46001d0580')
