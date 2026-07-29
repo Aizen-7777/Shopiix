@@ -560,7 +560,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
             f"💳 <b>𝗖𝗔𝗥𝗗</b>   ▸  <code>{card}</code>\n"
             f"◈  <b>𝗥𝗘𝗦𝗣</b>   ▸  <i>{message[:120]}</i>\n"
-            f"🌐 <b>𝗚𝗪</b>     ▸  Razorpay\n"
+            f"🌐 <b>𝗚𝗪</b>     ▸  Razorpay Charge\n"
             f"⏱  <b>𝗧𝗜𝗠𝗘</b>  ▸  {elapsed}s\n\n"
             f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
             parse_mode='html'
@@ -738,7 +738,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             f"🔥 <b>𝗟𝗜𝗩𝗘</b>     ▸  <code>{len(results['live'])}</code>\n"
             f"❌ <b>𝗗𝗘𝗔𝗗</b>     ▸  <code>{len(results['dead'])}</code>\n"
             f"⚠️ <b>𝗘𝗥𝗥𝗢𝗥𝗦</b>   ▸  <code>{results['error']}</code>\n"
-            f"🌐 <b>𝗚𝗔𝗧𝗘𝗪𝗔𝗬</b>  ▸  Razorpay\n"
+            f"🌐 <b>𝗚𝗔𝗧𝗘𝗪𝗔𝗬</b>  ▸  Razorpay Charge\n"
             f"⏱  <b>𝗧𝗜𝗠𝗘</b>    ▸  {h}h {m_t}m {s_t}s\n\n"
             f"〔 🎯  H I T S 〕\n"
             f"<blockquote>{hits_txt}</blockquote>\n\n"
