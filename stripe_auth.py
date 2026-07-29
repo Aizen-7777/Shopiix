@@ -446,38 +446,43 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         if not is_owner_fn(user_id) and len(cards) > MAX_CARDS:
             cards = cards[:MAX_CARDS]
 
-        proxies = load_proxies_fn(user_id)
-        total   = len(cards)
-        results = {'live': [], 'dead': [], 'error': 0, 'start': time.time()}
+        proxies  = load_proxies_fn(user_id)
+        total    = len(cards)
+        chat_id  = event.chat_id
+        results  = {'live': [], 'dead': [], 'error': 0, 'start': time.time()}
+        _stop    = [False]
 
         await wait_msg.edit(
             f"⚡ <b>Stripe Auth</b> — Starting\n💳 Cards: <b>{total}</b>",
             parse_mode='html'
         )
-        prog_msg = await bot.send_message(user_id, "🔄 Checking...", parse_mode='html')
-        _stop    = [False]
+        prog_msg = await event.respond("🔄 Checking...", parse_mode='html')
 
-        @bot.on(events.CallbackQuery(data=b'st_stop'))
+        # unique stop key per session to avoid handler conflicts
+        stop_key = f"st_stop_{user_id}_{int(time.time())}".encode()
+
         async def _stop_handler(e):
-            if e.sender_id == user_id:
+            if e.sender_id == user_id and e.data == stop_key:
                 _stop[0] = True
                 await e.answer("⛔ Stopping...")
 
+        bot.add_event_handler(_stop_handler, events.CallbackQuery())
+
         async def _update_prog(checked):
-            elapsed    = int(time.time() - results['start'])
-            h, rem     = divmod(elapsed, 3600)
-            m_t, s_t   = divmod(rem, 60)
-            buttons = [
-                [Button.inline(f"🔥  Live     →  [ {len(results['live'])} ]",  b"noop")],
-                [Button.inline(f"❌  Dead     →  [ {len(results['dead'])} ]",  b"noop")],
-                [Button.inline(f"⚠️  Errors   →  [ {results['error']} ]",      b"noop")],
-                [Button.inline(f"✅  Progress →  [ {checked} / {total} ]",     b"noop")],
-                [Button.inline(f"⏱  Time     →  {h}h {m_t}m {s_t}s",         b"noop")],
-                [Button.inline("⛔  Stop", b"st_stop")],
+            elapsed  = int(time.time() - results['start'])
+            h, rem   = divmod(elapsed, 3600)
+            m_t, s_t = divmod(rem, 60)
+            buttons  = [
+                [Button.inline(f"🔥  Live     →  [ {len(results['live'])} ]", b"noop")],
+                [Button.inline(f"❌  Dead     →  [ {len(results['dead'])} ]", b"noop")],
+                [Button.inline(f"⚠️  Errors   →  [ {results['error']} ]",     b"noop")],
+                [Button.inline(f"✅  Progress →  [ {checked} / {total} ]",    b"noop")],
+                [Button.inline(f"⏱  Time     →  {h}h {m_t}m {s_t}s",        b"noop")],
+                [Button.inline("⛔  Stop", stop_key)],
             ]
             try:
                 await bot.edit_message(
-                    user_id, prog_msg.id,
+                    chat_id, prog_msg.id,
                     "⚡ <b>#Shopiix</b> — Stripe Auth\n🔄 <i>Checking...</i>",
                     buttons=buttons, parse_mode='html'
                 )
@@ -490,6 +495,8 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             if _stop[0]:
                 return
             async with semaphore:
+                if _stop[0]:
+                    return
                 proxy  = random.choice(proxies) if proxies else None
                 result = await stripe_auth(card, site, pk, proxy_str=proxy)
                 st     = result['status']
@@ -503,6 +510,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
                     await _update_prog(idx)
 
         await asyncio.gather(*[_check_one(c, i + 1) for i, c in enumerate(cards)])
+        bot.remove_event_handler(_stop_handler)
 
         elapsed  = int(time.time() - results['start'])
         h, rem   = divmod(elapsed, 3600)
@@ -527,8 +535,6 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             f"⚡ <b>SHOPIIX</b>"
         )
         try:
-            await bot.edit_message(user_id, prog_msg.id, summary, parse_mode='html')
+            await bot.edit_message(chat_id, prog_msg.id, summary, parse_mode='html')
         except Exception:
-            await bot.send_message(user_id, summary, parse_mode='html')
-
-        bot.remove_event_handler(_stop_handler)
+            await event.respond(summary, parse_mode='html')
