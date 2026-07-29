@@ -106,41 +106,108 @@ def _is_rzme(site):
     return 'razorpay.me' in site
 
 # ─── RAZORPAY KEY SCRAPER ──────────────────────────────────────────────────────
+def _extract_rz_key_from_text(text, site):
+    """Try all known patterns to find rzp key in page text/JSON."""
+    patterns = [r'(rzp_live_[A-Za-z0-9]{14,})', r'(rzp_test_[A-Za-z0-9]{14,})']
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            key = m.group(1)
+            _rz_key_cache[site] = key
+            pid = re.search(r'(ppage_[A-Za-z0-9]+)', text)
+            if pid:
+                _rz_key_cache[site + '__ppage'] = pid.group(1)
+            return key
+    return None
+
 async def _scrape_rz_key(site, proxy=None):
     if site in _rz_key_cache:
         return _rz_key_cache[site]
 
-    patterns = [r'(rzp_live_[A-Za-z0-9]{14,})', r'(rzp_test_[A-Za-z0-9]{14,})']
-    headers  = {'user-agent': UA}
+    headers = {
+        'user-agent': UA,
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'accept-language': 'en-IN,en;q=0.9',
+    }
 
     if _is_rzme(site):
-        urls = [site, site + '/']
-    else:
-        urls = [f'{site}/', f'{site}/checkout/', f'{site}/shop/', f'{site}/donate/']
+        # Extract handle from URL: razorpay.me/@handle
+        handle = site.rstrip('/').split('/@')[-1] if '/@' in site else ''
 
-    try:
         connector = aiohttp.TCPConnector(ssl=False)
-        async with aiohttp.ClientSession(headers=headers, connector=connector) as sess:
-            for url in urls:
-                try:
-                    async with sess.get(url, proxy=proxy,
-                            timeout=aiohttp.ClientTimeout(total=12),
-                            allow_redirects=True) as resp:
-                        text = await resp.text(errors='ignore')
-                    for pat in patterns:
-                        m = re.search(pat, text)
-                        if m:
-                            _rz_key_cache[site] = m.group(1)
-                            # also cache payment_page_id for rzme sites
-                            pid = re.search(r'(ppage_[A-Za-z0-9]+)', text)
-                            if pid:
-                                _rz_key_cache[site + '__ppage'] = pid.group(1)
-                            return _rz_key_cache[site]
-                except Exception:
-                    continue
-    except Exception:
-        pass
-    return None
+        try:
+            async with aiohttp.ClientSession(headers=headers, connector=connector) as sess:
+
+                # 1. Try Razorpay's internal API for payment page by handle
+                if handle:
+                    api_urls = [
+                        f'https://api.razorpay.com/v1/payment_pages/handle/{handle}',
+                        f'https://api.razorpay.com/v1/payment_links/page/{handle}',
+                        f'https://razorpay.me/api/payment-page?handle={handle}',
+                    ]
+                    for api_url in api_urls:
+                        try:
+                            async with sess.get(api_url, proxy=proxy,
+                                    timeout=aiohttp.ClientTimeout(total=10)) as r:
+                                txt = await r.text(errors='ignore')
+                            key = _extract_rz_key_from_text(txt, site)
+                            if key:
+                                return key
+                        except Exception:
+                            continue
+
+                # 2. Load the page itself — key may be in __NEXT_DATA__ or inline script
+                for url in [site, site.rstrip('/') + '/']:
+                    try:
+                        async with sess.get(url, proxy=proxy,
+                                timeout=aiohttp.ClientTimeout(total=15),
+                                allow_redirects=True) as resp:
+                            text = await resp.text(errors='ignore')
+
+                        # Direct regex match first
+                        key = _extract_rz_key_from_text(text, site)
+                        if key:
+                            return key
+
+                        # Try __NEXT_DATA__ JSON
+                        nd = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.+?)</script>', text, re.S)
+                        if nd:
+                            key = _extract_rz_key_from_text(nd.group(1), site)
+                            if key:
+                                return key
+
+                        # Try window.__data or window.rzpData etc.
+                        for block in re.findall(r'<script[^>]*>(.+?)</script>', text, re.S):
+                            key = _extract_rz_key_from_text(block, site)
+                            if key:
+                                return key
+
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return None
+
+    else:
+        # WooCommerce site
+        urls = [f'{site}/', f'{site}/checkout/', f'{site}/shop/', f'{site}/donate/']
+        try:
+            connector = aiohttp.TCPConnector(ssl=False)
+            async with aiohttp.ClientSession(headers=headers, connector=connector) as sess:
+                for url in urls:
+                    try:
+                        async with sess.get(url, proxy=proxy,
+                                timeout=aiohttp.ClientTimeout(total=12),
+                                allow_redirects=True) as resp:
+                            text = await resp.text(errors='ignore')
+                        key = _extract_rz_key_from_text(text, site)
+                        if key:
+                            return key
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return None
 
 # ─── ORDER CREATION — razorpay.me payment page ────────────────────────────────
 async def _create_rzme_order(site, key, proxy):
