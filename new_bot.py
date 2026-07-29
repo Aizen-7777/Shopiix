@@ -15,7 +15,7 @@ import logging
 from datetime import datetime
 from urllib.parse import urlparse
 from stripe_auth import register_handlers as _stripe_register
-from razorpay_auth import register_handlers as _rz_register
+from razorpay_charge import register_handlers as _rz_register
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
