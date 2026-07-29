@@ -353,17 +353,44 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         if not is_premium_fn(user_id):
             await event.reply("❌ <b>Access Denied.</b> Premium only.", parse_mode='html')
             return
-        parts = event.raw_text.split(maxsplit=1)
-        if len(parts) < 2:
+
+        parts   = event.raw_text.split(maxsplit=1)
+        url_raw = None
+
+        if len(parts) >= 2:
+            url_raw = parts[1].strip()
+        elif event.reply_to_msg_id:
+            reply_msg = await event.get_reply_message()
+            if reply_msg and reply_msg.file and reply_msg.file.name and reply_msg.file.name.endswith('.txt'):
+                file_path = await reply_msg.download_media()
+                try:
+                    async with aiofiles.open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = await f.read()
+                    os.remove(file_path)
+                    m = re.search(r'https?://\S+', content)
+                    if not m:
+                        m = re.search(r'[a-zA-Z0-9][-a-zA-Z0-9.]+\.[a-zA-Z]{2,}', content)
+                    if m:
+                        url_raw = m.group(0).strip().rstrip('/')
+                except Exception:
+                    pass
+            elif reply_msg and reply_msg.text:
+                m = re.search(r'https?://\S+', reply_msg.text)
+                if m:
+                    url_raw = m.group(0).strip().rstrip('/')
+
+        if not url_raw:
             await event.reply(
-                "❌ <b>Usage:</b> <code>/sadd https://yoursite.com</code>\n\n"
+                "❌ <b>Usage:</b>\n"
+                "▸ <code>/sadd https://yoursite.com</code>\n"
+                "▸ Reply to a <b>.txt</b> file containing the site URL with <code>/sadd</code>\n\n"
                 "Site must be WooCommerce + Stripe.",
                 parse_mode='html'
             )
             return
 
-        url = _normalize_url(parts[1].strip())
-        wait = await event.reply(f"⏳ Checking site for Stripe PK...", parse_mode='html')
+        url  = _normalize_url(url_raw)
+        wait = await event.reply(f"⏳ Checking <code>{url}</code> for Stripe PK...", parse_mode='html')
 
         connector = aiohttp.TCPConnector(ssl=False, force_close=True)
         try:
