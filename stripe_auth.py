@@ -276,7 +276,10 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
     async def sadd_handler(event):
         user_id = event.sender_id
         if not is_premium_fn(user_id):
-            await event.reply("❌ <b>Access Denied.</b> Premium only.", parse_mode='html')
+            await event.reply(
+                "❌ <b>Access Denied</b>\n\nOnly premium users can use this.",
+                parse_mode='html'
+            )
             return
 
         parts   = event.raw_text.split(maxsplit=1)
@@ -310,15 +313,26 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             await event.reply(
                 "❌ <b>Usage:</b>\n"
                 "▸ <code>/sadd https://yoursite.com</code>\n"
-                "▸ Reply to a <b>.txt</b> file with site URL and send <code>/sadd</code>\n\n"
-                "Site must be WooCommerce + Stripe.",
+                "▸ Reply to a <b>.txt</b> file containing the URL with <code>/sadd</code>\n\n"
+                "<i>Site must be WooCommerce + Stripe.</i>",
+                parse_mode='html'
+            )
+            return
+
+        sites_now = _get_user_sites(user_id)
+        if len(sites_now) >= MAX_SITES:
+            await event.reply(
+                f"❌ <b>Max {MAX_SITES} sites reached.</b>\n"
+                f"Use <code>/srem</code> to remove one first.",
                 parse_mode='html'
             )
             return
 
         url  = _normalize_url(url_raw)
         wait = await event.reply(
-            f"⏳ Checking <code>{url}</code> for Stripe PK...", parse_mode='html'
+            f"◈  <b>𝗦𝗖𝗔𝗡𝗡𝗜𝗡𝗚</b>  <code>[ ░░░░░░░░░░ ]</code>\n"
+            f"<i>Fetching Stripe PK from site...</i>",
+            parse_mode='html'
         )
 
         proxies = load_proxies_fn(user_id)
@@ -328,20 +342,25 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         if pk:
             _add_user_site(user_id, url)
             sites  = _get_user_sites(user_id)
-            masked = pk[:12] + '...' + pk[-4:]
+            masked = pk[:14] + '...' + pk[-4:]
             await wait.edit(
-                f"✅ <b>Stripe Site Added!</b>\n\n"
-                f"🌐 <b>Site</b>   ▸  <code>{url}</code>\n"
-                f"🔑 <b>PK</b>     ▸  <code>{masked}</code>\n"
-                f"📊 <b>Total</b>  ▸  {len(sites)} site(s)\n\n"
-                f"Use <code>/slist</code> to see all sites.\n"
-                f"Use <code>/st cc|mm|yy|cvv</code> or <code>/stxt</code> to check cards.",
+                f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
+                f"✅  <b>𝗦𝗜𝗧𝗘  𝗔𝗗𝗗𝗘𝗗</b>  ✅\n"
+                f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
+                f"🌐 <b>𝗦𝗜𝗧𝗘</b>   ▸  <code>{url}</code>\n"
+                f"🔑 <b>𝗣𝗞</b>     ▸  <code>{masked}</code>\n"
+                f"📊 <b>𝗧𝗢𝗧𝗔𝗟</b>  ▸  {len(sites)} / {MAX_SITES} sites\n\n"
+                f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
                 parse_mode='html'
             )
         else:
             await wait.edit(
-                "❌ <b>No Stripe PK found on this site.</b>\n\n"
-                "Make sure it's a WooCommerce + Stripe site.",
+                f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
+                f"❌  <b>𝗡𝗢  𝗣𝗞  𝗙𝗢𝗨𝗡𝗗</b>  ❌\n"
+                f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
+                f"🌐 <b>𝗦𝗜𝗧𝗘</b>  ▸  <code>{url}</code>\n\n"
+                f"<i>No Stripe PK found. Make sure it's a WooCommerce + Stripe site.</i>\n\n"
+                f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
                 parse_mode='html'
             )
 
@@ -350,24 +369,31 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
     async def slist_handler(event):
         user_id = event.sender_id
         if not is_premium_fn(user_id):
-            await event.reply("❌ <b>Access Denied.</b> Premium only.", parse_mode='html')
+            await event.reply(
+                "❌ <b>Access Denied</b>\n\nOnly premium users can use this.",
+                parse_mode='html'
+            )
             return
         sites = _get_user_sites(user_id)
         if not sites:
             await event.reply(
-                "❌ <b>No sites configured.</b>\n\nUse <code>/sadd https://yoursite.com</code>",
+                "❌ <b>No sites configured.</b>\n\n"
+                "Use <code>/sadd https://yoursite.com</code>",
                 parse_mode='html'
             )
             return
         lines = '\n'.join(
-            f"<b>{i+1}.</b> <code>{s}</code>"
-            + (f"  🔑 <i>{_pk_cache[s][:12]}...</i>" if s in _pk_cache else "")
+            f"<b>{i+1}.</b>  <code>{s}</code>"
+            + (f"\n      🔑 <i>{_pk_cache[s][:14]}...</i>" if s in _pk_cache else "")
             for i, s in enumerate(sites)
         )
         await event.reply(
-            f"🌐 <b>Your Stripe Sites ({len(sites)}/{MAX_SITES})</b>\n"
-            f"━━━━━━━━━━━━━━━\n{lines}\n\n"
-            f"Remove: <code>/srem &lt;number&gt;</code>",
+            f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
+            f"🌐  <b>𝗦𝗧𝗥𝗜𝗣𝗘  𝗦𝗜𝗧𝗘𝗦</b>  [ {len(sites)} / {MAX_SITES} ]\n"
+            f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
+            f"{lines}\n\n"
+            f"◈  Remove: <code>/srem &lt;number&gt;</code>\n"
+            f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
             parse_mode='html'
         )
 
@@ -376,12 +402,15 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
     async def srem_handler(event):
         user_id = event.sender_id
         if not is_premium_fn(user_id):
-            await event.reply("❌ <b>Access Denied.</b> Premium only.", parse_mode='html')
+            await event.reply(
+                "❌ <b>Access Denied</b>\n\nOnly premium users can use this.",
+                parse_mode='html'
+            )
             return
         parts = event.raw_text.split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip().isdigit():
             await event.reply(
-                "❌ <b>Usage:</b> <code>/srem &lt;number&gt;</code>\n"
+                "❌ <b>Usage:</b> <code>/srem &lt;number&gt;</code>\n\n"
                 "Use <code>/slist</code> to see site numbers.",
                 parse_mode='html'
             )
@@ -390,17 +419,25 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         removed = _remove_user_site(user_id, idx)
         if removed:
             await event.reply(
-                f"🗑 <b>Removed:</b> <code>{removed}</code>", parse_mode='html'
+                f"🗑  <b>𝗦𝗜𝗧𝗘  𝗥𝗘𝗠𝗢𝗩𝗘𝗗</b>\n\n"
+                f"🌐 <code>{removed}</code>",
+                parse_mode='html'
             )
         else:
-            await event.reply("❌ Invalid number. Use <code>/slist</code>.", parse_mode='html')
+            await event.reply(
+                "❌ Invalid number. Use <code>/slist</code> to check.",
+                parse_mode='html'
+            )
 
     # ── /st ────────────────────────────────────────────────────────────────────
     @bot.on(events.NewMessage(pattern=r'^/st(\s|$)'))
     async def st_handler(event):
         user_id = event.sender_id
         if not is_premium_fn(user_id):
-            await event.reply("❌ <b>Access Denied.</b> Premium only.", parse_mode='html')
+            await event.reply(
+                "❌ <b>Access Denied</b>\n\nOnly premium users can use this.",
+                parse_mode='html'
+            )
             return
 
         sites = _get_user_sites(user_id)
@@ -414,13 +451,17 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
 
         parts = event.raw_text.split(maxsplit=1)
         if len(parts) < 2:
-            await event.reply("❌ <b>Usage:</b> <code>/st cc|mm|yy|cvv</code>", parse_mode='html')
+            await event.reply(
+                "❌ <b>Usage:</b> <code>/st cc|mm|yy|cvv</code>",
+                parse_mode='html'
+            )
             return
 
         card = parts[1].strip()
         if card.count('|') != 3:
             await event.reply(
-                "❌ <b>Invalid format.</b> Use: <code>cc|mm|yy|cvv</code>", parse_mode='html'
+                "❌ Invalid CC format. Use: <code>/st 4111111111111111|01|25|123</code>",
+                parse_mode='html'
             )
             return
 
@@ -433,13 +474,13 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             pk = await _scrape_pk(site, proxy)
         if not pk:
             await event.reply(
-                f"❌ No PK on <code>{site}</code>. Remove with <code>/srem</code>.",
+                f"❌ No PK on <code>{site}</code>.\nRemove it with <code>/srem</code> and add a working site.",
                 parse_mode='html'
             )
             return
 
         status_msg = await event.reply(
-            f"⏳ <b>Stripe Auth</b> — Checking...\n<code>{card}</code>",
+            f"◈  <b>𝗦𝗖𝗔𝗡𝗡𝗜𝗡𝗚</b>  <code>[ ░░░░░░░░░░ ]</code>\n<code>{card}</code>",
             parse_mode='html'
         )
         t0      = time.time()
@@ -448,15 +489,26 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
 
         status  = result['status']
         message = result['message']
-        emoji   = '🔥' if status == 'Live' else '❌' if status == 'Dead' else '⚠️'
+
+        if status == 'Live':
+            s_emoji = '🔥'
+            s_text  = '𝗔𝗣𝗣𝗥𝗢𝗩𝗘𝗗'
+        elif status == 'Dead':
+            s_emoji = '❌'
+            s_text  = '𝗗𝗘𝗖𝗟𝗜𝗡𝗘𝗗'
+        else:
+            s_emoji = '⚠️'
+            s_text  = '𝗘𝗥𝗥𝗢𝗥'
 
         await status_msg.edit(
-            f"{emoji} <b>{status}</b>\n\n"
-            f"💳 <b>Card</b>    ▸  <code>{card}</code>\n"
-            f"◈  <b>Resp</b>    ▸  <i>{message}</i>\n"
-            f"🌐 <b>GW</b>      ▸  Stripe Auth\n"
-            f"⏱  <b>Time</b>   ▸  {elapsed}s\n\n"
-            f"⚡ <b>SHOPIIX</b>",
+            f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
+            f"{s_emoji}  <b>{s_text}</b>  {s_emoji}\n"
+            f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
+            f"💳 <b>𝗖𝗔𝗥𝗗</b>   ▸  <code>{card}</code>\n"
+            f"◈  <b>𝗥𝗘𝗦𝗣</b>   ▸  <i>{message[:120]}</i>\n"
+            f"🌐 <b>𝗚𝗪</b>     ▸  Stripe Auth\n"
+            f"⏱  <b>𝗧𝗜𝗠𝗘</b>  ▸  {elapsed}s\n\n"
+            f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
             parse_mode='html'
         )
 
@@ -527,12 +579,15 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         _stop    = [False]
 
         await wait_msg.edit(
-            f"⚡ <b>Stripe Auth</b> — Starting\n💳 Cards: <b>{total}</b>",
+            f"◈  <b>𝗦𝗖𝗔𝗡𝗡𝗜𝗡𝗚</b>  <code>[ ░░░░░░░░░░ ]</code>\n"
+            f"💳 <b>{total}</b> cards loaded — Starting Stripe Auth...",
             parse_mode='html'
         )
-        prog_msg = await event.respond("🔄 Checking...", parse_mode='html')
+        prog_msg = await event.respond(
+            f"⚡ <b>#Shopiix</b> ⚡\n🔄 <i>Cooking CCs One by One...</i>",
+            parse_mode='html'
+        )
 
-        # unique stop key per session to avoid handler conflicts
         stop_key = f"st_stop_{user_id}_{int(time.time())}".encode()
 
         async def _stop_handler(e):
@@ -542,28 +597,38 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
 
         bot.add_event_handler(_stop_handler, events.CallbackQuery())
 
-        async def _update_prog(checked):
+        async def _update_prog(checked, last_card='', last_resp=''):
             elapsed  = int(time.time() - results['start'])
             h, rem   = divmod(elapsed, 3600)
             m_t, s_t = divmod(rem, 60)
-            buttons  = [
-                [Button.inline(f"🔥  Live     →  [ {len(results['live'])} ]", b"noop")],
-                [Button.inline(f"❌  Dead     →  [ {len(results['dead'])} ]", b"noop")],
+            # mask last card number
+            if last_card:
+                num    = last_card.split('|')[0]
+                masked = num[:6] + '*' * max(0, len(num) - 10) + num[-4:] if len(num) > 10 else num
+            else:
+                masked = '—'
+            resp_short = (last_resp[:26] + '...') if len(last_resp) > 28 else (last_resp or '—')
+            buttons = [
+                [Button.inline(f"💳  Card  →  {masked}", b"noop")],
+                [Button.inline(f"📝  Response  →  {resp_short}", b"noop")],
+                [Button.inline(f"🔥  Approve  →  [ {len(results['live'])} ]", b"noop")],
+                [Button.inline(f"❌  Decline  →  [ {len(results['dead'])} ]", b"noop")],
                 [Button.inline(f"⚠️  Errors   →  [ {results['error']} ]",     b"noop")],
-                [Button.inline(f"✅  Progress →  [ {checked} / {total} ]",    b"noop")],
-                [Button.inline(f"⏱  Time     →  {h}h {m_t}m {s_t}s",        b"noop")],
+                [Button.inline(f"✅  Progress  →  [ {checked} / {total} ]",   b"noop")],
+                [Button.inline(f"⏱  Time  →  {h}h {m_t}m {s_t}s",           b"noop")],
                 [Button.inline("⛔  Stop", stop_key)],
             ]
             try:
                 await bot.edit_message(
                     chat_id, prog_msg.id,
-                    "⚡ <b>#Shopiix</b> — Stripe Auth\n🔄 <i>Checking...</i>",
+                    f"⚡ <b>#Shopiix</b> ⚡\n🔄 <i>Cooking CCs One by One...</i>",
                     buttons=buttons, parse_mode='html'
                 )
             except Exception:
                 pass
 
         semaphore = asyncio.Semaphore(20)
+        checked_count = [0]
 
         async def _check_one(card, idx):
             if _stop[0]:
@@ -576,14 +641,16 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
                 proxy  = random.choice(proxies) if proxies else None
                 result = await stripe_auth(card, site, pk, proxy_str=proxy)
                 st     = result['status']
+                msg    = result['message']
                 if st == 'Live':
                     results['live'].append(result)
                 elif st == 'Error':
                     results['error'] += 1
                 else:
                     results['dead'].append(result)
-                if idx % 5 == 0 or idx == total:
-                    await _update_prog(idx)
+                checked_count[0] += 1
+                if checked_count[0] % 5 == 0 or checked_count[0] == total:
+                    await _update_prog(checked_count[0], card, msg)
 
         await asyncio.gather(*[_check_one(c, i + 1) for i, c in enumerate(cards)])
         bot.remove_event_handler(_stop_handler)
@@ -591,24 +658,26 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         elapsed  = int(time.time() - results['start'])
         h, rem   = divmod(elapsed, 3600)
         m_t, s_t = divmod(rem, 60)
-        hits_txt = ''.join(
-            f"🔥 <code>{r['card']}</code>  <i>{r['message']}</i>\n"
-            for r in results['live'][:20]
-        )
+
+        hits_txt = ''
+        for r in results['live'][:10]:
+            hits_txt += f"🔥 <code>{r['card']}</code>\n"
+        if not hits_txt:
+            hits_txt = 'No hits found'
 
         summary = (
             f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
-            f"⚡  <b>SHOPIIX · STRIPE AUTH DONE</b>  ⚡\n"
+            f"⚡  <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫  ·  𝗦𝗖𝗔𝗡  𝗖𝗢𝗠𝗣𝗟𝗘𝗧𝗘</b>  ⚡\n"
             f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
-            f"💳 <b>TOTAL</b>    ▸  <code>{total}</code>\n"
-            f"🔥 <b>LIVE</b>     ▸  <code>{len(results['live'])}</code>\n"
-            f"❌ <b>DEAD</b>     ▸  <code>{len(results['dead'])}</code>\n"
-            f"⚠️ <b>ERRORS</b>   ▸  <code>{results['error']}</code>\n"
-            f"🌐 <b>GATEWAY</b>  ▸  Stripe Auth\n"
-            f"⏱  <b>TIME</b>    ▸  {h}h {m_t}m {s_t}s\n\n"
+            f"💳 <b>𝗧𝗢𝗧𝗔𝗟</b>    ▸  <code>{total}</code>\n"
+            f"🔥 <b>𝗟𝗜𝗩𝗘</b>     ▸  <code>{len(results['live'])}</code>\n"
+            f"❌ <b>𝗗𝗘𝗔𝗗</b>     ▸  <code>{len(results['dead'])}</code>\n"
+            f"⚠️ <b>𝗘𝗥𝗥𝗢𝗥𝗦</b>   ▸  <code>{results['error']}</code>\n"
+            f"🌐 <b>𝗚𝗔𝗧𝗘𝗪𝗔𝗬</b>  ▸  Stripe Auth\n"
+            f"⏱  <b>𝗧𝗜𝗠𝗘</b>    ▸  {h}h {m_t}m {s_t}s\n\n"
             f"〔 🎯  H I T S 〕\n"
-            f"<blockquote>{hits_txt or 'No hits'}</blockquote>\n\n"
-            f"⚡ <b>SHOPIIX</b>"
+            f"<blockquote>{hits_txt}</blockquote>\n\n"
+            f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>'
         )
         try:
             await bot.edit_message(chat_id, prog_msg.id, summary, parse_mode='html')
