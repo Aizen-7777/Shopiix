@@ -107,7 +107,6 @@ def _is_rzme(site):
 
 # ─── RAZORPAY KEY SCRAPER ──────────────────────────────────────────────────────
 def _extract_rz_key_from_text(text, site):
-    """Try all known patterns to find rzp key in page text/JSON."""
     patterns = [r'(rzp_live_[A-Za-z0-9]{14,})', r'(rzp_test_[A-Za-z0-9]{14,})']
     for pat in patterns:
         m = re.search(pat, text)
@@ -120,6 +119,78 @@ def _extract_rz_key_from_text(text, site):
             return key
     return None
 
+async def _scrape_rz_key_playwright(site):
+    """Headless browser fallback for JS-rendered razorpay.me pages."""
+    try:
+        from playwright.async_api import async_playwright
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+            )
+            ctx = await browser.new_context(user_agent=UA)
+            page = await ctx.new_page()
+            key = None
+            try:
+                await page.goto(site, wait_until='domcontentloaded', timeout=25000)
+                await page.wait_for_timeout(3000)
+
+                # 1. Full rendered HTML
+                content = await page.content()
+                key = _extract_rz_key_from_text(content, site)
+
+                # 2. Check window-level JS variables
+                if not key:
+                    try:
+                        key_js = await page.evaluate("""() => {
+                            const vars = ['__rzp__', '__data__', 'rzpCheckout', 'RZP_CONFIG',
+                                          '__NEXT_DATA__', 'pageProps'];
+                            for (const v of vars) {
+                                const val = window[v];
+                                if (!val) continue;
+                                const s = JSON.stringify(val);
+                                const m = s.match(/rzp_(live|test)_[A-Za-z0-9]{14,}/);
+                                if (m) return m[0];
+                            }
+                            // scan all script tags text
+                            for (const s of document.querySelectorAll('script')) {
+                                const m = s.textContent.match(/rzp_(live|test)_[A-Za-z0-9]{14,}/);
+                                if (m) return m[0];
+                            }
+                            return null;
+                        }""")
+                        if key_js and re.match(r'rzp_(live|test)_', key_js):
+                            _rz_key_cache[site] = key_js
+                            key = key_js
+                    except Exception:
+                        pass
+
+                # 3. Intercept network — key often appears in XHR responses
+                if not key:
+                    captured = []
+                    async def handle_response(resp):
+                        try:
+                            if 'razorpay' in resp.url and resp.status == 200:
+                                txt = await resp.text()
+                                captured.append(txt)
+                        except Exception:
+                            pass
+                    page.on('response', handle_response)
+                    await page.reload(wait_until='networkidle', timeout=20000)
+                    for txt in captured:
+                        k = _extract_rz_key_from_text(txt, site)
+                        if k:
+                            key = k
+                            break
+
+            finally:
+                await browser.close()
+            return key
+    except ImportError:
+        return None
+    except Exception:
+        return None
+
 async def _scrape_rz_key(site, proxy=None):
     if site in _rz_key_cache:
         return _rz_key_cache[site]
@@ -131,65 +202,39 @@ async def _scrape_rz_key(site, proxy=None):
     }
 
     if _is_rzme(site):
-        # Extract handle from URL: razorpay.me/@handle
-        handle = site.rstrip('/').split('/@')[-1] if '/@' in site else ''
-
+        # Step 1: quick HTTP attempt (sometimes works)
         connector = aiohttp.TCPConnector(ssl=False)
         try:
             async with aiohttp.ClientSession(headers=headers, connector=connector) as sess:
-
-                # 1. Try Razorpay's internal API for payment page by handle
-                if handle:
-                    api_urls = [
-                        f'https://api.razorpay.com/v1/payment_pages/handle/{handle}',
-                        f'https://api.razorpay.com/v1/payment_links/page/{handle}',
-                        f'https://razorpay.me/api/payment-page?handle={handle}',
-                    ]
-                    for api_url in api_urls:
-                        try:
-                            async with sess.get(api_url, proxy=proxy,
-                                    timeout=aiohttp.ClientTimeout(total=10)) as r:
-                                txt = await r.text(errors='ignore')
-                            key = _extract_rz_key_from_text(txt, site)
-                            if key:
-                                return key
-                        except Exception:
-                            continue
-
-                # 2. Load the page itself — key may be in __NEXT_DATA__ or inline script
                 for url in [site, site.rstrip('/') + '/']:
                     try:
                         async with sess.get(url, proxy=proxy,
                                 timeout=aiohttp.ClientTimeout(total=15),
                                 allow_redirects=True) as resp:
                             text = await resp.text(errors='ignore')
-
-                        # Direct regex match first
                         key = _extract_rz_key_from_text(text, site)
                         if key:
                             return key
-
-                        # Try __NEXT_DATA__ JSON
                         nd = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.+?)</script>', text, re.S)
                         if nd:
                             key = _extract_rz_key_from_text(nd.group(1), site)
                             if key:
                                 return key
-
-                        # Try window.__data or window.rzpData etc.
                         for block in re.findall(r'<script[^>]*>(.+?)</script>', text, re.S):
                             key = _extract_rz_key_from_text(block, site)
                             if key:
                                 return key
-
                     except Exception:
                         continue
         except Exception:
             pass
-        return None
+
+        # Step 2: Playwright headless browser (full JS render)
+        key = await _scrape_rz_key_playwright(site)
+        return key
 
     else:
-        # WooCommerce site
+        # WooCommerce site — simple HTTP scrape
         urls = [f'{site}/', f'{site}/checkout/', f'{site}/shop/', f'{site}/donate/']
         try:
             connector = aiohttp.TCPConnector(ssl=False)
