@@ -258,13 +258,13 @@ async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
                 _order_body['amount'] = 100
             async with s.post(
                 f'{RZ_API}/v1/payment_pages/{plink}/order',
-                params={'keyless_header': keyless},
                 json=_order_body,
                 headers={
-                    'Accept':       'application/json, text/plain, */*',
-                    'Content-Type': 'application/json',
-                    'Origin':       'https://razorpay.me',
-                    'Referer':      site + '/',
+                    'Accept':        'application/json, text/plain, */*',
+                    'Content-Type':  'application/json',
+                    'Origin':        'https://razorpay.me',
+                    'Referer':       site + '/',
+                    'keyless_header': keyless,
                 },
                 proxy=proxy,
                 timeout=aiohttp.ClientTimeout(total=15)
