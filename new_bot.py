@@ -15,6 +15,7 @@ import logging
 from datetime import datetime
 from urllib.parse import urlparse
 from stripe_auth import register_handlers as _stripe_register
+from razorpay_auth import register_handlers as _rz_register
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -2697,6 +2698,7 @@ async def list_keys_command(event):
     await event.reply(''.join(lines), parse_mode='html')
 
 _stripe_register(bot, is_premium, is_owner, load_proxies)
+_rz_register(bot, is_premium, is_owner, load_proxies)
 
 async def _on_start():
     _fj_load()
