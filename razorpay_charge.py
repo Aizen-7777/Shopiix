@@ -254,6 +254,8 @@ async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
             _order_body = {'notes': {'comment': '', 'name': card_name}}
             if ppid:
                 _order_body['line_items'] = [{'payment_page_item_id': ppid, 'amount': 100}]
+            else:
+                _order_body['amount'] = 100
             async with s.post(
                 f'{RZ_API}/v1/payment_pages/{plink}/order',
                 params={'keyless_header': keyless},
