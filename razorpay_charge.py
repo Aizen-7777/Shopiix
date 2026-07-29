@@ -256,13 +256,13 @@ async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
                 _order_body['line_items'] = [{'payment_page_item_id': ppid, 'amount': 100}]
             async with s.post(
                 f'{RZ_API}/v1/payment_pages/{plink}/order',
+                params={'keyless_header': keyless},
                 json=_order_body,
                 headers={
-                    'Accept':        'application/json, text/plain, */*',
-                    'Content-Type':  'application/json',
-                    'Origin':        'https://razorpay.me',
-                    'Referer':       site + '/',
-                    'keyless_header': keyless,
+                    'Accept':       'application/json, text/plain, */*',
+                    'Content-Type': 'application/json',
+                    'Origin':       'https://razorpay.me',
+                    'Referer':      site + '/',
                 },
                 proxy=proxy,
                 timeout=aiohttp.ClientTimeout(total=15)
@@ -317,16 +317,23 @@ async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
             }
 
             # ── Step 3: Preferences (warmup) ────────────────────────────────
+            _pref_resources = [
+                'checkout_version_config', 'merchant', 'merchant_features', 'downtime',
+                'customer', 'customer_tokens', 'truecaller', 'methods', 'experiments',
+                'offers', 'checkout_config', 'order', 'invoice', 'buyer_protection', 'personalization',
+            ]
             try:
                 await s.post(
-                    f'{RZ_API}/v2/standard_checkout/preferences'
-                    f'?x_entity_id={order_id}&session_token={sessid}&keyless_header={keyless}',
+                    f'{RZ_API}/v2/standard_checkout/preferences',
+                    params={'x_entity_id': order_id, 'session_token': sessid, 'keyless_header': keyless},
                     json={
-                        'query': [{'resource': r} for r in
-                                  ['checkout_version_config', 'merchant', 'methods', 'order']],
+                        'query': [{'resource': r} for r in _pref_resources],
                         'query_params': {
-                            'device_id': device_id, 'amount': order_amount,
-                            'currency': order_currency, 'order_id': order_id,
+                            'device_id': device_id, 'rtb_device_id': fhash,
+                            'amount': order_amount, 'currency': order_currency,
+                            'option_currency': order_currency, 'truecaller': False,
+                            'qr_required': False, 'library': 'checkoutjs',
+                            'platform': 'browser', 'order_id': order_id,
                             'payment_link_id': plink, 'contact': phone,
                         },
                         'action': 'get',
@@ -341,16 +348,19 @@ async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
             # ── Step 4: Checkout order context ──────────────────────────────
             try:
                 await s.post(
-                    f'{RZ_API}/v1/standard_checkout/checkout/order'
-                    f'?key_id={key_id}&session_token={sessid}&keyless_header={keyless}',
+                    f'{RZ_API}/v1/standard_checkout/checkout/order',
+                    params={'key_id': key_id, 'session_token': sessid, 'keyless_header': keyless},
                     data={
                         'notes[email]': email, 'notes[phone]': phone_short,
                         'payment_link_id': plink, 'key_id': key_id,
                         'contact': phone, 'email': email, 'currency': order_currency,
                         '_[integration]': 'payment_pages', '_[device.id]': device_id,
-                        '_[library]': 'checkoutjs', '_[platform]': 'browser',
-                        '_[build]': BUILD, '_[shield][fhash]': fhash,
-                        '_[shield][tz]': '0', '_[device_id]': device_id,
+                        '_[library]': 'checkoutjs', '_[library_src]': 'no-src',
+                        '_[current_script_src]': 'no-src', '_[platform]': 'browser',
+                        '_[env]': '', '_[is_magic_script]': 'false',
+                        '_[os]': 'windows', '_[build]': BUILD,
+                        '_[shield][fhash]': fhash, '_[shield][tz]': '0',
+                        '_[device_id]': device_id,
                         '_[shield][os]': 'windows', '_[shield][platform]': 'browser',
                         '_[shield][browser]': 'chrome', '_[request_index]': '0',
                         'amount': str(order_amount), 'order_id': order_id,
@@ -370,8 +380,8 @@ async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
             ).decode()
 
             async with s.post(
-                f'{RZ_API}/v1/standard_checkout/payments/create/ajax'
-                f'?x_entity_id={order_id}&session_token={sessid}&keyless_header={keyless}',
+                f'{RZ_API}/v1/standard_checkout/payments/create/ajax',
+                params={'x_entity_id': order_id, 'session_token': sessid, 'keyless_header': keyless},
                 data={
                     'user_risk_providers_token': token_b64,
                     'notes[comment]': '', 'notes[email]': email,
@@ -419,8 +429,8 @@ async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
             # Cancel (cleanup)
             try:
                 await s.get(
-                    f'{RZ_API}/v1/standard_checkout/payments/{payment_id}/cancel'
-                    f'?key_id={key_id}&session_token={sessid}&keyless_header={keyless}',
+                    f'{RZ_API}/v1/standard_checkout/payments/{payment_id}/cancel',
+                    params={'key_id': key_id, 'session_token': sessid, 'keyless_header': keyless},
                     headers=std_h, proxy=proxy,
                     timeout=aiohttp.ClientTimeout(total=10)
                 )
