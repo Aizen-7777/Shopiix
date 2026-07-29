@@ -476,9 +476,19 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
 
         parts   = event.raw_text.split(maxsplit=1)
         url_raw = None
+        manual_key = None
 
         if len(parts) >= 2:
-            url_raw = parts[1].strip()
+            arg = parts[1].strip()
+            # Check if user provided: url key
+            rz_key_m = re.search(r'(rzp_(?:live|test)_[A-Za-z0-9]{14,})', arg)
+            url_m    = re.search(r'(https?://\S+)', arg)
+            if rz_key_m:
+                manual_key = rz_key_m.group(1)
+            if url_m:
+                url_raw = url_m.group(1).rstrip('/')
+            elif not rz_key_m:
+                url_raw = arg.split()[0]  # first token as URL
         elif event.reply_to_msg_id:
             reply_msg = await event.get_reply_message()
             if reply_msg and reply_msg.file and reply_msg.file.name and \
@@ -504,10 +514,10 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         if not url_raw:
             await event.reply(
                 "❌ <b>Usage:</b>\n"
-                "▸ <code>/rzadd https://yoursite.com</code>\n"
-                "▸ Reply to a <b>.txt</b> file with site URL\n"
-                "▸ <code>/rzaddtxt</code> — bulk add ALL URLs from .txt\n\n"
-                "<i>Supports razorpay.me pages and WooCommerce sites.</i>",
+                "▸ <code>/rzadd https://razorpay.me/@handle</code>\n"
+                "▸ <code>/rzadd https://razorpay.me/@handle rzp_live_xxx</code> — manual key\n"
+                "▸ <code>/rzaddtxt</code> — bulk add from .txt file\n\n"
+                "<i>For razorpay.me pages, provide the key manually if auto-detect fails.</i>",
                 parse_mode='html'
             )
             return
@@ -521,41 +531,54 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             )
             return
 
-        url  = _normalize_url(url_raw)
-        wait = await event.reply(
-            f"◈  <b>𝗦𝗖𝗔𝗡𝗡𝗜𝗡𝗚</b>  <code>[ ░░░░░░░░░░ ]</code>\n"
-            f"<i>Fetching Razorpay key from site...</i>",
-            parse_mode='html'
-        )
+        url = _normalize_url(url_raw)
 
-        proxies = load_proxies_fn(user_id)
-        proxy   = random.choice(proxies) if proxies else None
-        key     = await _scrape_rz_key(url, proxy)
+        if manual_key:
+            # User provided key directly — skip scraping
+            _rz_key_cache[url] = manual_key
+            key = manual_key
+            wait = None
+        else:
+            wait = await event.reply(
+                f"◈  <b>𝗦𝗖𝗔𝗡𝗡𝗜𝗡𝗚</b>  <code>[ ░░░░░░░░░░ ]</code>\n"
+                f"<i>Fetching Razorpay key from site...</i>",
+                parse_mode='html'
+            )
+            proxies = load_proxies_fn(user_id)
+            proxy   = random.choice(proxies) if proxies else None
+            key     = await _scrape_rz_key(url, proxy)
 
         if key:
             _add_user_rz_site(user_id, url)
             sites  = _get_user_rz_sites(user_id)
             masked = key[:14] + '...' + key[-4:]
-            await wait.edit(
+            txt = (
                 f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
                 f"✅  <b>𝗦𝗜𝗧𝗘  𝗔𝗗𝗗𝗘𝗗</b>  ✅\n"
                 f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
                 f"🌐 <b>𝗦𝗜𝗧𝗘</b>   ▸  <code>{url}</code>\n"
                 f"🔑 <b>𝗞𝗘𝗬</b>    ▸  <code>{masked}</code>\n"
                 f"📊 <b>𝗧𝗢𝗧𝗔𝗟</b>  ▸  {len(sites)} / {MAX_SITES} sites\n\n"
-                f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
-                parse_mode='html'
+                f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>'
             )
+            if wait:
+                await wait.edit(txt, parse_mode='html')
+            else:
+                await event.reply(txt, parse_mode='html')
         else:
-            await wait.edit(
+            no_key_txt = (
                 f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
                 f"❌  <b>𝗡𝗢  𝗞𝗘𝗬  𝗙𝗢𝗨𝗡𝗗</b>  ❌\n"
                 f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
                 f"🌐 <b>𝗦𝗜𝗧𝗘</b>  ▸  <code>{url}</code>\n\n"
-                f"<i>No Razorpay key found. Make sure the site uses Razorpay.</i>\n\n"
-                f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
-                parse_mode='html'
+                f"<i>Auto-detect failed. Provide key manually:</i>\n"
+                f"<code>/rzadd {url} rzp_live_xxx</code>\n\n"
+                f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>'
             )
+            if wait:
+                await wait.edit(no_key_txt, parse_mode='html')
+            else:
+                await event.reply(no_key_txt, parse_mode='html')
 
     # ── /rzaddtxt ──────────────────────────────────────────────────────────────
     @bot.on(events.NewMessage(pattern=r'^/rzaddtxt(\s|$)'))
