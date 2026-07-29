@@ -109,19 +109,14 @@ def _gen_session_id():
     return ''.join(random.choices(chars, k=14))
 
 # ─── PAGE DATA EXTRACTION ──────────────────────────────────────────────────────
-def _extract_var_data(html: str):
-    """Brace-counting parser for var data = {...} in Razorpay pages."""
-    m = re.search(r'var data = (\{)', html)
-    if not m:
-        return None
-    start = m.start(1)
+def _brace_parse(html: str, start: int):
     depth, in_str, escaped = 0, False, False
     for i, c in enumerate(html[start:]):
-        if escaped:   escaped = False; continue
+        if escaped:          escaped = False; continue
         if c == '\\' and in_str: escaped = True; continue
-        if c == '"':  in_str = not in_str; continue
-        if in_str:    continue
-        if c == '{':  depth += 1
+        if c == '"':         in_str = not in_str; continue
+        if in_str:           continue
+        if c == '{':         depth += 1
         elif c == '}':
             depth -= 1
             if depth == 0:
@@ -129,8 +124,47 @@ def _extract_var_data(html: str):
                 except: return None
     return None
 
+def _extract_var_data(html: str):
+    # Try var data = {...}
+    m = re.search(r'var data\s*=\s*(\{)', html)
+    if m:
+        result = _brace_parse(html, m.start(1))
+        if result:
+            return result
+
+    # Try __NEXT_DATA__ (Next.js SSR)
+    m = re.search(r'<script[^>]+id=["\']__NEXT_DATA__["\'][^>]*>', html)
+    if m:
+        brace_pos = html.find('{', m.end())
+        if brace_pos != -1:
+            result = _brace_parse(html, brace_pos)
+            if result:
+                # Navigate to pageProps.data or pageProps directly
+                page_props = (result.get('props', {}).get('pageProps', {})
+                              or result.get('pageProps', {}))
+                data = page_props.get('data') or page_props.get('pageData') or page_props
+                if isinstance(data, dict) and data:
+                    return data
+
+    # Last resort: find keyless_header inline
+    m = re.search(r'"keyless_header"\s*:\s*"([^"]+)"', html)
+    if m:
+        keyless = m.group(1)
+        plink_m = re.search(r'"id"\s*:\s*"(pl_[^"]+)"', html)
+        ppid_m  = re.search(r'"id"\s*:\s*"(ppi_[^"]+)"', html)
+        key_m   = re.search(r'"key_id"\s*:\s*"([^"]*)"', html)
+        if plink_m:
+            return {
+                'keyless_header': keyless,
+                'key_id':  key_m.group(1) if key_m else '',
+                'payment_link': {
+                    'id': plink_m.group(1),
+                    'payment_page_items': [{'id': ppid_m.group(1)}] if ppid_m else [],
+                }
+            }
+    return None
+
 def _parse_site_info(data: dict):
-    """Extract keyless_header, plink, ppid from var data dict."""
     if not data:
         return None
     keyless = data.get('keyless_header', '')
