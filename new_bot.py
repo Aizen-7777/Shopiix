@@ -1649,6 +1649,7 @@ async def cmds_gates_handler(event):
     buttons = [
         [Button.inline("🛒  S H O P I F Y", b"gate_shopify")],
         [Button.inline("💳  S T R I P E  A U T H", b"gate_stripe")],
+        [Button.inline("🪙  R A Z O R P A Y  C H A R G E", b"gate_razorpay")],
         [Button.inline("« B A C K", b"menu_cmds")],
     ]
     await event.edit(text, buttons=buttons, parse_mode='html')
@@ -1672,7 +1673,26 @@ async def gate_stripe_handler(event):
         "💳 <b>S T R I P E  A U T H</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
         "<blockquote>/st <code>card|mm|yy|cvv</code> — Single check\n"
-        "/stxt — Bulk check (reply to .txt file)</blockquote>"
+        "/stxt — Bulk check (reply to .txt file)\n"
+        "/sadd <code>url</code> — Add site (or reply to .txt)\n"
+        "/slist — List added sites\n"
+        "/srem <code>number</code> — Remove site</blockquote>"
+    )
+    back = [[Button.inline("« B A C K", b"cmds_gates")]]
+    await event.edit(text, buttons=back, parse_mode='html')
+
+@bot.on(events.CallbackQuery(pattern=b"gate_razorpay"))
+async def gate_razorpay_handler(event):
+    await event.answer()
+    text = (
+        "🪙 <b>R A Z O R P A Y  C H A R G E</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "<blockquote>/rz <code>card|mm|yy|cvv</code> — Single check\n"
+        "/rztxt — Bulk check (reply to .txt file)\n"
+        "/rzadd <code>url</code> — Add site (or reply to .txt)\n"
+        "/rzaddtxt — Bulk add sites from .txt file\n"
+        "/rzlist — List added sites\n"
+        "/rzrem <code>number</code> — Remove site</blockquote>"
     )
     back = [[Button.inline("« B A C K", b"cmds_gates")]]
     await event.edit(text, buttons=back, parse_mode='html')
