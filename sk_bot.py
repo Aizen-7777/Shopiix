@@ -204,15 +204,41 @@ async def on_setsk(e):
         )
 
 
+def _parse_proxy(raw: str) -> str:
+    raw = raw.strip()
+    # already has scheme — use as-is
+    if raw.startswith("http://") or raw.startswith("https://") or raw.startswith("socks5://"):
+        return raw
+    # host:port:user:pass
+    parts = raw.split(":")
+    if len(parts) == 4:
+        host, port, user, passwd = parts
+        return f"http://{user}:{passwd}@{host}:{port}"
+    # host:port (no auth)
+    if len(parts) == 2:
+        return f"http://{raw}"
+    # user:pass@host:port
+    if "@" in raw:
+        return f"http://{raw}"
+    return ""
+
+
 @bot.on(events.NewMessage(pattern=r'^/setproxy\s+(.+)'))
 async def on_setproxy(e):
     global _PROXY
     if e.sender_id != OWNER_ID:
         await e.respond("❌ Owner only.")
         return
-    proxy = e.pattern_match.group(1).strip()
-    if not (proxy.startswith("http://") or proxy.startswith("https://") or proxy.startswith("socks5://")):
-        await e.respond("❌ Invalid format.\nExamples:\n`http://user:pass@host:port`\n`socks5://user:pass@host:port`")
+    raw = e.pattern_match.group(1).strip()
+    proxy = _parse_proxy(raw)
+    if not proxy:
+        await e.respond(
+            "❌ Could not parse proxy.\nSupported formats:\n"
+            "`http://user:pass@host:port`\n"
+            "`socks5://user:pass@host:port`\n"
+            "`host:port:user:pass`\n"
+            "`host:port`"
+        )
         return
     _PROXY = proxy
     host = proxy.split("@")[-1] if "@" in proxy else proxy.split("//")[-1]
