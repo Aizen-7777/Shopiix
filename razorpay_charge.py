@@ -262,9 +262,12 @@ _LIVE_REASONS = {
     'insufficient_funds', 'card_velocity_exceeded', 'do_not_honor',
     'not_permitted', 'restricted_card', 'security_violation',
     'transaction_not_permitted', 'incorrect_cvv',
+    'payment_risk_check_failed', 'risk_threshold_breached',
+    'suspected_fraud', 'fraud_risk_check_failed',
 }
 _LIVE_KEYWORDS = ['insufficient', 'do not honor', 'not permitted',
-                  'restricted', 'security violation', 'transaction limit', 'cvv']
+                  'restricted', 'security violation', 'transaction limit', 'cvv',
+                  'risk check', 'fraud']
 
 async def razorpay_check(card: str, site: str, site_data: dict, proxy_str=None):
     p = card.strip().split('|')
