@@ -147,6 +147,31 @@ async def on_start(e):
     )
 
 
+async def _verify_sk(key: str) -> tuple[bool, str]:
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "User-Agent": UA,
+    }
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get("https://api.stripe.com/v1/balance",
+                             headers=headers,
+                             proxy=_PROXY or None,
+                             timeout=aiohttp.ClientTimeout(total=10)) as r:
+                data = await r.json()
+        if r.status == 200:
+            # show available balance if present
+            avail = data.get("available", [])
+            bal = f"{avail[0]['amount']/100:.2f} {avail[0]['currency'].upper()}" if avail else "N/A"
+            return True, f"Balance: {bal}"
+        elif r.status == 401:
+            return False, data.get("error", {}).get("message", "Invalid API key")
+        else:
+            return False, f"HTTP {r.status}"
+    except Exception as ex:
+        return False, str(ex)
+
+
 @bot.on(events.NewMessage(pattern=r'^/setsk\s+(.+)'))
 async def on_setsk(e):
     global _SK
@@ -157,8 +182,26 @@ async def on_setsk(e):
     if not (key.startswith("sk_live_") or key.startswith("sk_test_")):
         await e.respond("❌ Invalid key. Must start with `sk_live_` or `sk_test_`")
         return
-    _SK = key
-    await e.respond(f"✅ SK set: `{key[:20]}...`")
+
+    checking = await e.respond("⏳ Verifying SK...")
+    is_live, detail = await _verify_sk(key)
+
+    if is_live:
+        _SK = key
+        tag = "🟢 LIVE" if key.startswith("sk_live_") else "🟡 TEST"
+        await checking.edit(
+            f"{tag} **SK Set**\n\n"
+            f"Key     : `{key[:20]}...`\n"
+            f"Status  : ✅ Valid\n"
+            f"Detail  : {detail}"
+        )
+    else:
+        await checking.edit(
+            f"🔴 **DEAD SK**\n\n"
+            f"Key     : `{key[:20]}...`\n"
+            f"Status  : ❌ Invalid\n"
+            f"Reason  : {detail}"
+        )
 
 
 @bot.on(events.NewMessage(pattern=r'^/setproxy\s+(.+)'))
