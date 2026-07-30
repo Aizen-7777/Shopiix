@@ -1,12 +1,13 @@
 """
 Standalone SK Stripe Card Checker Bot
 Commands:
-  /start       — welcome
-  /setsk <key> — set your Stripe secret key (owner only)
-  /chk <card>  — check card: 4111111111111111|12|2028|123
-  /info        — show current SK (masked) and settings
+  /start         — welcome
+  /setsk <key>   — set your Stripe secret key (owner only)
+  /chk <card>    — check single card: 4111111111111111|12|2028|123
+  /chktxt        — bulk check from .txt file (reply to file)
+  /info          — show current SK (masked) and settings
 """
-import asyncio, aiohttp, json, os
+import asyncio, aiohttp, json, os, re, tempfile
 from telethon import TelegramClient, events
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
@@ -18,7 +19,10 @@ CURRENCY  = "usd"
 AMOUNT    = 50   # cents — $0.50
 # ─────────────────────────────────────────────────────────────────────────────
 
-_SK = ""   # set via /setsk at runtime
+_SK        = ""     # set via /setsk at runtime
+_txt_running: set = set()   # user IDs with active /chktxt scan
+MAX_CARDS  = 50000
+_SEM       = asyncio.Semaphore(5)   # max 5 concurrent checks
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
@@ -55,6 +59,18 @@ def classify(resp: dict):
         return "DEAD ❌", f"{code}"
 
     return f"UNKNOWN ⚠️", f"{code} — {message}"
+
+
+def _parse_cards(text: str) -> list:
+    cards = []
+    for line in text.splitlines():
+        line = line.strip()
+        # support | and : separators, skip junk lines
+        line = re.sub(r'[:\s]+', '|', line)
+        parts = line.split("|")
+        if len(parts) >= 4:
+            cards.append("|".join(parts[:4]))
+    return cards
 
 
 async def check_card_api(card_str: str):
@@ -119,7 +135,8 @@ async def on_start(e):
         "**SK Stripe Card Checker**\n\n"
         "Commands:\n"
         "`/setsk sk_live_xxx` — set secret key (owner only)\n"
-        "`/chk 4111111111111111|12|2028|123` — check card\n"
+        "`/chk 4111111111111111|12|2028|123` — check single card\n"
+        "`/chktxt` — bulk check (send .txt file then reply with /chktxt)\n"
         "`/info` — show current settings"
     )
 
@@ -177,6 +194,127 @@ async def on_chk(e):
         f"**Detail:** {detail}\n"
         f"**Amount:** ${AMOUNT/100:.2f} {CURRENCY.upper()}"
     )
+
+
+@bot.on(events.NewMessage(pattern=r'^/chktxt'))
+async def on_chktxt(e):
+    global _txt_running
+    if not _SK:
+        await e.respond("❌ No SK set. Owner must run `/setsk sk_live_xxx` first.")
+        return
+
+    uid = e.sender_id
+    if uid in _txt_running:
+        await e.respond("⚠️ You already have a scan running. Wait for it to finish.")
+        return
+
+    # get the .txt file — either attached to this message or the replied-to message
+    file_msg = e
+    if e.reply_to_msg_id:
+        file_msg = await e.get_reply_message()
+
+    if not file_msg.document:
+        await e.respond("❌ Send a `.txt` file and reply to it with `/chktxt`\n"
+                        "Or send `/chktxt` with the file attached.")
+        return
+
+    # download file
+    tmp = tempfile.mktemp(suffix=".txt")
+    await bot.download_media(file_msg, file=tmp)
+    try:
+        with open(tmp, encoding="utf-8", errors="ignore") as f:
+            raw = f.read()
+    finally:
+        os.remove(tmp)
+
+    cards = _parse_cards(raw)
+    if not cards:
+        await e.respond("❌ No valid cards found in file.")
+        return
+
+    cards = cards[:MAX_CARDS]
+    total = len(cards)
+
+    prog_msg = await e.respond(
+        f"⏳ Starting scan...\n"
+        f"Total cards: **{total}**"
+    )
+
+    _txt_running.add(uid)
+
+    hits      = []
+    checked   = 0
+    live_count = 0
+    charged_count = 0
+
+    async def _check_one(card):
+        nonlocal checked, live_count, charged_count
+        try:
+            status, detail = await check_card_api(card)
+        except Exception:
+            status, detail = "DEAD ❌", "error"
+        checked += 1
+        if "CHARGED" in status:
+            charged_count += 1
+            hits.append(f"[CHARGED] {card} | {detail}")
+        elif "LIVE" in status:
+            live_count += 1
+            hits.append(f"[LIVE] {card} | {detail}")
+        return status, detail
+
+    async def _worker(card):
+        async with _SEM:
+            return await _check_one(card)
+
+    # progress update task
+    async def _update_progress():
+        while uid in _txt_running:
+            await asyncio.sleep(5)
+            try:
+                await prog_msg.edit(
+                    f"⏳ Scanning...\n"
+                    f"Checked : **{checked}** / {total}\n"
+                    f"Live    : **{live_count}**\n"
+                    f"Charged : **{charged_count}**"
+                )
+            except Exception:
+                pass
+
+    prog_task = asyncio.create_task(_update_progress())
+
+    try:
+        await asyncio.gather(*[_worker(c) for c in cards])
+    finally:
+        _txt_running.discard(uid)
+        prog_task.cancel()
+
+    # final summary
+    await prog_msg.edit(
+        f"✅ **Scan Complete**\n\n"
+        f"Total   : {total}\n"
+        f"Checked : {checked}\n"
+        f"Live    : **{live_count}**\n"
+        f"Charged : **{charged_count}**\n"
+        f"Dead    : {checked - live_count - charged_count}"
+    )
+
+    # send hits file if any
+    if hits:
+        hits_text = "\n".join(hits)
+        tmp_hits = tempfile.mktemp(suffix=".txt")
+        with open(tmp_hits, "w") as f:
+            f.write(hits_text)
+        try:
+            await bot.send_file(
+                e.chat_id,
+                tmp_hits,
+                caption=f"🎯 Hits: {len(hits)} | Live: {live_count} | Charged: {charged_count}",
+                file_name="sk_hits.txt"
+            )
+        finally:
+            os.remove(tmp_hits)
+    else:
+        await e.respond("No hits found.")
 
 
 print("SK Checker Bot running...")
