@@ -257,9 +257,22 @@ async def on_chktxt(e):
         if "CHARGED" in status:
             charged_count += 1
             hits.append(f"[CHARGED] {card} | {detail}")
+            await bot.send_message(
+                e.chat_id,
+                f"💳 **CHARGED ✅**\n"
+                f"Card   : `{card}`\n"
+                f"Detail : {detail}\n"
+                f"Amount : ${AMOUNT/100:.2f} {CURRENCY.upper()}"
+            )
         elif "LIVE" in status:
             live_count += 1
             hits.append(f"[LIVE] {card} | {detail}")
+            await bot.send_message(
+                e.chat_id,
+                f"💳 **LIVE ✅**\n"
+                f"Card   : `{card}`\n"
+                f"Detail : {detail}"
+            )
         return status, detail
 
     async def _worker(card):
