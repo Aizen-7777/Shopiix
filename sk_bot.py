@@ -91,35 +91,18 @@ async def check_card_api(card_str: str):
     proxy = _PROXY or None
 
     async with aiohttp.ClientSession() as s:
-        # Step 1 — Create PaymentMethod
-        pm_data = {
-            "type":              "card",
-            "card[number]":      number,
-            "card[exp_month]":   month,
-            "card[exp_year]":    year,
-            "card[cvc]":         cvv,
-            "billing_details[name]": "John Doe",
-        }
-        async with s.post("https://api.stripe.com/v1/payment_methods",
-                          headers=headers, data=pm_data, proxy=proxy) as r:
-            pm_resp = await r.json()
-
-        if "error" in pm_resp:
-            code = pm_resp["error"].get("code", "")
-            msg  = pm_resp["error"].get("message", "Unknown")
-            status = "DEAD ❌" if code in _DEAD_CODES else f"ERROR ⚠️ ({code})"
-            return status, msg
-
-        pm_id = pm_resp["id"]
-
-        # Step 2 — Create + Confirm PaymentIntent
+        # Single step — inline payment_method_data in PaymentIntent
         pi_data = {
-            "amount":              str(AMOUNT),
-            "currency":            CURRENCY,
-            "payment_method":      pm_id,
-            "confirmation_method": "manual",
-            "confirm":             "true",
-            "capture_method":      "automatic",
+            "amount":                                str(AMOUNT),
+            "currency":                              CURRENCY,
+            "confirm":                               "true",
+            "capture_method":                        "automatic",
+            "payment_method_data[type]":             "card",
+            "payment_method_data[card][number]":     number,
+            "payment_method_data[card][exp_month]":  month,
+            "payment_method_data[card][exp_year]":   year,
+            "payment_method_data[card][cvc]":        cvv,
+            "payment_method_data[billing_details][name]": "John Doe",
         }
         async with s.post("https://api.stripe.com/v1/payment_intents",
                           headers=headers, data=pi_data, proxy=proxy) as r:
