@@ -1,11 +1,13 @@
 """
 Standalone SK Stripe Card Checker Bot
 Commands:
-  /start         — welcome
-  /setsk <key>   — set your Stripe secret key (owner only)
-  /chk <card>    — check single card: 4111111111111111|12|2028|123
-  /chktxt        — bulk check from .txt file (reply to file)
-  /info          — show current SK (masked) and settings
+  /start              — welcome
+  /setsk <key>        — set your Stripe secret key (owner only)
+  /setproxy <url>     — set proxy e.g. http://user:pass@host:port (owner only)
+  /delproxy           — remove proxy
+  /chk <card>         — check single card: 4111111111111111|12|2028|123
+  /chktxt             — bulk check from .txt file (reply to file)
+  /info               — show current SK, proxy, and settings
 """
 import asyncio, aiohttp, json, os, re, tempfile
 from telethon import TelegramClient, events
@@ -20,6 +22,7 @@ AMOUNT    = 50   # cents — $0.50
 # ─────────────────────────────────────────────────────────────────────────────
 
 _SK        = ""     # set via /setsk at runtime
+_PROXY     = ""     # set via /setproxy at runtime (e.g. http://user:pass@host:port)
 _txt_running: set = set()   # user IDs with active /chktxt scan
 MAX_CARDS  = 50000
 _SEM       = asyncio.Semaphore(5)   # max 5 concurrent checks
@@ -74,7 +77,7 @@ def _parse_cards(text: str) -> list:
 
 
 async def check_card_api(card_str: str):
-    global _SK
+    global _SK, _PROXY
     parts = card_str.strip().split("|")
     if len(parts) != 4:
         return None, "Bad format. Use: number|MM|YYYY|CVV"
@@ -85,6 +88,7 @@ async def check_card_api(card_str: str):
         "Content-Type":  "application/x-www-form-urlencoded",
         "User-Agent":    UA,
     }
+    proxy = _PROXY or None
 
     async with aiohttp.ClientSession() as s:
         # Step 1 — Create PaymentMethod
@@ -97,7 +101,7 @@ async def check_card_api(card_str: str):
             "billing_details[name]": "John Doe",
         }
         async with s.post("https://api.stripe.com/v1/payment_methods",
-                          headers=headers, data=pm_data) as r:
+                          headers=headers, data=pm_data, proxy=proxy) as r:
             pm_resp = await r.json()
 
         if "error" in pm_resp:
@@ -118,7 +122,7 @@ async def check_card_api(card_str: str):
             "capture_method":      "automatic",
         }
         async with s.post("https://api.stripe.com/v1/payment_intents",
-                          headers=headers, data=pi_data) as r:
+                          headers=headers, data=pi_data, proxy=proxy) as r:
             pi_resp = await r.json()
 
     return classify(pi_resp)
@@ -135,6 +139,8 @@ async def on_start(e):
         "**SK Stripe Card Checker**\n\n"
         "Commands:\n"
         "`/setsk sk_live_xxx` — set secret key (owner only)\n"
+        "`/setproxy http://user:pass@host:port` — set proxy\n"
+        "`/delproxy` — remove proxy\n"
         "`/chk 4111111111111111|12|2028|123` — check single card\n"
         "`/chktxt` — bulk check (send .txt file then reply with /chktxt)\n"
         "`/info` — show current settings"
@@ -155,15 +161,42 @@ async def on_setsk(e):
     await e.respond(f"✅ SK set: `{key[:20]}...`")
 
 
+@bot.on(events.NewMessage(pattern=r'^/setproxy\s+(.+)'))
+async def on_setproxy(e):
+    global _PROXY
+    if e.sender_id != OWNER_ID:
+        await e.respond("❌ Owner only.")
+        return
+    proxy = e.pattern_match.group(1).strip()
+    if not (proxy.startswith("http://") or proxy.startswith("https://") or proxy.startswith("socks5://")):
+        await e.respond("❌ Invalid format.\nExamples:\n`http://user:pass@host:port`\n`socks5://user:pass@host:port`")
+        return
+    _PROXY = proxy
+    host = proxy.split("@")[-1] if "@" in proxy else proxy.split("//")[-1]
+    await e.respond(f"✅ Proxy set: `{host}`")
+
+
+@bot.on(events.NewMessage(pattern=r'^/delproxy'))
+async def on_delproxy(e):
+    global _PROXY
+    if e.sender_id != OWNER_ID:
+        await e.respond("❌ Owner only.")
+        return
+    _PROXY = ""
+    await e.respond("✅ Proxy removed. Using direct connection.")
+
+
 @bot.on(events.NewMessage(pattern=r'^/info'))
 async def on_info(e):
     if e.sender_id != OWNER_ID:
         await e.respond("❌ Owner only.")
         return
-    sk_display = f"`{_SK[:20]}...`" if _SK else "Not set"
+    sk_display    = f"`{_SK[:20]}...`" if _SK else "❌ Not set"
+    proxy_display = f"`{_PROXY.split('@')[-1]}`" if _PROXY else "❌ None (direct)"
     await e.respond(
         f"**SK Checker Info**\n\n"
         f"SK       : {sk_display}\n"
+        f"Proxy    : {proxy_display}\n"
         f"Currency : {CURRENCY}\n"
         f"Amount   : ${AMOUNT/100:.2f}"
     )
