@@ -235,27 +235,43 @@ def _parse_site_info(data: dict):
     return {'keyless_header': keyless, 'plink': plink, 'ppid': ppid, 'key_id': key_id}
 
 async def _get_site_data(site, proxy=None):
-    """Fetch and cache site data (keyless_header, plink, ppid) from page."""
+    """Fetch and cache site data (keyless_header, plink, ppid) from page.
+    Always tries direct (no proxy) first — proxies often get blocked by razorpay.me.
+    Falls back to proxy only if direct fetch fails or returns no data."""
     if site in _rz_data_cache:
         return _rz_data_cache[site]
-    try:
+
+    hdrs = {
+        'User-Agent':      UA,
+        'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+    }
+
+    async def _fetch(use_proxy):
         connector = aiohttp.TCPConnector(ssl=False)
-        async with aiohttp.ClientSession(
-                headers={'User-Agent': UA,
-                         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                         'Accept-Language': 'en-US,en;q=0.5'},
-                connector=connector) as sess:
-            async with sess.get(site, proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=15),
-                    allow_redirects=True) as resp:
-                html = await resp.text(errors='ignore')
-        data = _extract_var_data(html)
-        info = _parse_site_info(data)
-        if info:
-            _rz_data_cache[site] = info
-        return info
-    except Exception:
-        return None
+        try:
+            async with aiohttp.ClientSession(headers=hdrs, connector=connector) as sess:
+                async with sess.get(site, proxy=use_proxy,
+                        timeout=aiohttp.ClientTimeout(total=15),
+                        allow_redirects=True) as resp:
+                    return await resp.text(errors='ignore')
+        except Exception:
+            return None
+        finally:
+            await connector.close()
+
+    # Try direct first
+    html = await _fetch(None)
+    info = _parse_site_info(_extract_var_data(html)) if html else None
+
+    # Fallback to proxy if direct gave no data
+    if not info and proxy:
+        html = await _fetch(proxy)
+        info = _parse_site_info(_extract_var_data(html)) if html else None
+
+    if info:
+        _rz_data_cache[site] = info
+    return info
 
 # ─── CORE CHECKER ──────────────────────────────────────────────────────────────
 _LIVE_REASONS = {
