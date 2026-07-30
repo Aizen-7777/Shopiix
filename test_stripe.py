@@ -7,7 +7,7 @@ import asyncio, aiohttp, re, json
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 # ── CHANGE THESE ─────────────────────────────────────────────────────────────
-SITE_URL  = "https://acefonline.org/donate/"
+SITE_URL  = "https://tethysgeoscience.org/donate/"
 CARD      = "4111111111111111"
 MONTH     = "12"
 YEAR      = "2028"
