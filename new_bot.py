@@ -1692,7 +1692,11 @@ async def gate_razorpay_handler(event):
         "/rzadd <code>url</code> — Add site (or reply to .txt)\n"
         "/rzaddtxt — Bulk add sites from .txt file\n"
         "/rzlist — List added sites\n"
-        "/rzrem <code>number</code> — Remove site</blockquote>"
+        "/rzrem <code>number</code> — Remove site</blockquote>\n\n"
+        "💡 <b>T I P</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "<i>For better charge results, use <b>Rotating Proxy</b> or <b>Mobile Proxy</b>.\n"
+        "Add proxies via <code>/proxy</code> for higher success rate.</i>"
     )
     back = [[Button.inline("« B A C K", b"cmds_gates")]]
     await event.edit(text, buttons=back, parse_mode='html')
