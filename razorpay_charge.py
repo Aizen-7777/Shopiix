@@ -13,7 +13,7 @@ from telethon import events, Button
 
 # ─── CONFIG ────────────────────────────────────────────────────────────────────
 MAX_CARDS      = 50000
-MAX_SITES      = 10
+MAX_SITES      = 25
 _RZ_SITES_FILE   = "razorpay_sites.json"
 _rz_sites: dict      = {}   # {user_id: [url1, url2, ...]}
 _rz_global_sites: list = [] # owner's shared pool — available to all users
@@ -99,10 +99,7 @@ def _remove_global_rz_site_by_url(url):
     return False
 
 def _get_effective_sites(uid):
-    """Personal sites + global sites (deduped). Global sites always available."""
-    personal = _get_user_rz_sites(uid)
-    global_  = _get_global_rz_sites()
-    return list(dict.fromkeys(personal + global_))
+    return _get_global_rz_sites()
 
 def _normalize_url(url):
     url = url.strip().rstrip('/')
@@ -570,8 +567,8 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
     @bot.on(events.NewMessage(pattern=r'^/rzadd(\s|$)'))
     async def rzadd_handler(event):
         user_id = event.sender_id
-        if not is_premium_fn(user_id):
-            await event.reply("❌ <b>Access Denied</b>\n\nOnly premium users can use this.", parse_mode='html')
+        if not is_owner_fn(user_id):
+            await event.reply("❌ <b>Access Denied</b>\n\nSirf owner sites add kar sakta hai.", parse_mode='html')
             return
 
         parts = event.raw_text.split(maxsplit=1)
@@ -606,8 +603,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             )
             return
 
-        is_owner = is_owner_fn(user_id)
-        cur_sites = _get_global_rz_sites() if is_owner else _get_user_rz_sites(user_id)
+        cur_sites = _get_global_rz_sites()
         if len(cur_sites) >= MAX_SITES:
             await event.reply(f"❌ <b>Max {MAX_SITES} sites reached.</b>\nUse <code>/rzrem</code> first.", parse_mode='html')
             return
@@ -623,21 +619,14 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         info    = await _get_site_data(url, proxy)
 
         if info:
-            if is_owner:
-                _add_global_rz_site(url)
-                sites = _get_global_rz_sites()
-                pool_label = '🌍 Global'
-            else:
-                _add_user_rz_site(user_id, url)
-                sites = _get_user_rz_sites(user_id)
-                pool_label = '👤 Personal'
+            _add_global_rz_site(url)
+            sites = _get_global_rz_sites()
             await wait.edit(
                 f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
                 f"✅  <b>𝗦𝗜𝗧𝗘  𝗔𝗗𝗗𝗘𝗗</b>  ✅\n"
                 f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
                 f"🌐 <b>𝗦𝗜𝗧𝗘</b>   ▸  <code>{url}</code>\n"
                 f"🔑 <b>𝗣𝗟𝗜𝗡𝗞</b>  ▸  <code>{info['plink']}</code>\n"
-                f"📦 <b>𝗣𝗢𝗢𝗟</b>   ▸  {pool_label}\n"
                 f"📊 <b>𝗧𝗢𝗧𝗔𝗟</b>  ▸  {len(sites)} / {MAX_SITES} sites\n\n"
                 f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
                 parse_mode='html'
@@ -657,8 +646,8 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
     @bot.on(events.NewMessage(pattern=r'^/rzaddtxt(\s|$)'))
     async def rzaddtxt_handler(event):
         user_id = event.sender_id
-        if not is_premium_fn(user_id):
-            await event.reply("❌ <b>Access Denied</b>\n\nOnly premium users can use this.", parse_mode='html')
+        if not is_owner_fn(user_id):
+            await event.reply("❌ <b>Access Denied</b>\n\nSirf owner sites add kar sakta hai.", parse_mode='html')
             return
 
         if not event.reply_to_msg_id:
@@ -689,28 +678,24 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             await wait.edit("❌ No URLs found in file.", parse_mode='html')
             return
 
-        proxies  = load_proxies_fn(user_id)
-        is_owner = is_owner_fn(user_id)
+        proxies = load_proxies_fn(user_id)
         added, skipped, failed = [], [], []
 
         for url in all_urls:
             url = _normalize_url(url)
-            sites_now = _get_global_rz_sites() if is_owner else _get_user_rz_sites(user_id)
+            sites_now = _get_global_rz_sites()
             if len(sites_now) >= MAX_SITES or url in sites_now:
                 skipped.append(url)
                 continue
             proxy = random.choice(proxies) if proxies else None
             info  = await _get_site_data(url, proxy)
             if info:
-                if is_owner:
-                    _add_global_rz_site(url)
-                else:
-                    _add_user_rz_site(user_id, url)
+                _add_global_rz_site(url)
                 added.append((url, info['plink']))
             else:
                 failed.append(url)
 
-        total_now = len(_get_global_rz_sites() if is_owner else _get_user_rz_sites(user_id))
+        total_now = len(_get_global_rz_sites())
         added_lines = ''.join(f"✅ <code>{u}</code>  <i>{p}</i>\n" for u, p in added[:10]) or '<i>None added</i>'
         skip_txt    = f"\n⚠️ <b>Skipped</b>  ▸  {len(skipped)}" if skipped else ''
         fail_txt    = f"\n❌ <b>Failed</b>   ▸  {len(failed)}" if failed else ''
@@ -734,41 +719,22 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
         if not is_premium_fn(user_id):
             await event.reply("❌ <b>Access Denied</b>\n\nOnly premium users can use this.", parse_mode='html')
             return
-        is_owner = is_owner_fn(user_id)
-        global_s = _get_global_rz_sites()
-        pers_s   = _get_user_rz_sites(user_id)
-
-        if is_owner:
-            sites_to_show = global_s
-            label = '🌍 Global Pool'
-        else:
-            sites_to_show = list(dict.fromkeys(pers_s + global_s))
-            label = f'👤 Personal: {len(pers_s)}  +  🌍 Global: {len(global_s)}'
-
-        if not sites_to_show:
+        sites = _get_global_rz_sites()
+        if not sites:
             await event.reply("❌ <b>No sites configured.</b>\n\nOwner ne abhi tak koi site add nahi ki.", parse_mode='html')
             return
 
-        def _site_line(i, s, tag=''):
-            plink = _rz_data_cache[s]['plink'] if s in _rz_data_cache else ''
-            return (f"<b>{i+1}.</b>  <code>{s}</code>{tag}"
-                    + (f"\n      🔑 <i>{plink}</i>" if plink else ''))
-
-        if is_owner:
-            lines = '\n'.join(_site_line(i, s) for i, s in enumerate(sites_to_show))
-        else:
-            lines = '\n'.join(
-                _site_line(i, s, '  <i>[personal]</i>' if s in pers_s else '  <i>[global]</i>')
-                for i, s in enumerate(sites_to_show)
-            )
-
+        lines = '\n'.join(
+            f"<b>{i+1}.</b>  <code>{s}</code>"
+            + (f"\n      🔑 <i>{_rz_data_cache[s]['plink']}</i>" if s in _rz_data_cache else "")
+            for i, s in enumerate(sites)
+        )
+        rem_note = "\n◈  Remove: <code>/rzrem &lt;number&gt;</code>" if is_owner_fn(user_id) else ""
         await event.reply(
             f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n"
-            f"🌐  <b>𝗥𝗔𝗭𝗢𝗥𝗣𝗔𝗬  𝗦𝗜𝗧𝗘𝗦</b>  [ {len(sites_to_show)} ]\n"
+            f"🌐  <b>𝗥𝗔𝗭𝗢𝗥𝗣𝗔𝗬  𝗦𝗜𝗧𝗘𝗦</b>  [ {len(sites)} / {MAX_SITES} ]\n"
             f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
-            f"📦 <b>Pool</b>  ▸  {label}\n\n"
-            f"{lines}\n\n"
-            f"◈  Remove: <code>/rzrem &lt;number&gt;</code>\n"
+            f"{lines}{rem_note}\n\n"
             f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
             parse_mode='html'
         )
@@ -777,18 +743,15 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
     @bot.on(events.NewMessage(pattern=r'^/rzrem(\s|$)'))
     async def rzrem_handler(event):
         user_id = event.sender_id
-        if not is_premium_fn(user_id):
-            await event.reply("❌ <b>Access Denied</b>\n\nOnly premium users can use this.", parse_mode='html')
+        if not is_owner_fn(user_id):
+            await event.reply("❌ <b>Access Denied</b>\n\nSirf owner sites remove kar sakta hai.", parse_mode='html')
             return
         parts = event.raw_text.split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip().isdigit():
             await event.reply("❌ <b>Usage:</b> <code>/rzrem &lt;number&gt;</code>", parse_mode='html')
             return
-        idx = int(parts[1].strip()) - 1
-        if is_owner_fn(user_id):
-            removed = _remove_global_rz_site(idx)
-        else:
-            removed = _remove_user_rz_site(user_id, idx)
+        idx     = int(parts[1].strip()) - 1
+        removed = _remove_global_rz_site(idx)
         if removed:
             await event.reply(f"🗑  <b>𝗦𝗜𝗧𝗘  𝗥𝗘𝗠𝗢𝗩𝗘𝗗</b>\n\n🌐 <code>{removed}</code>", parse_mode='html')
         else:
