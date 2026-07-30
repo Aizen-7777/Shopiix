@@ -568,7 +568,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
     async def rzadd_handler(event):
         user_id = event.sender_id
         if not is_owner_fn(user_id):
-            await event.reply("❌ <b>Access Denied</b>\n\nSirf owner sites add kar sakta hai.", parse_mode='html')
+            await event.reply("❌ <b>Access Denied</b>\n\nOnly the owner can add sites.", parse_mode='html')
             return
 
         parts = event.raw_text.split(maxsplit=1)
@@ -637,7 +637,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
                 f"❌  <b>𝗡𝗢  𝗗𝗔𝗧𝗔  𝗙𝗢𝗨𝗡𝗗</b>  ❌\n"
                 f"⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹ ⊹\n\n"
                 f"🌐 <b>𝗦𝗜𝗧𝗘</b>  ▸  <code>{url}</code>\n\n"
-                f"<i>Site se payment data nahi mila. Check karo URL sahi hai.</i>\n\n"
+                f"<i>Could not fetch payment data from this site. Please check the URL.</i>\n\n"
                 f'⚡ <b>𝗦𝗛𝗢𝗣𝗜𝗜𝗫</b>  ·  <a href="tg://user?id=5895386985">𝗔𝗶𝘇𝗲𝗻</a>',
                 parse_mode='html'
             )
@@ -647,7 +647,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
     async def rzaddtxt_handler(event):
         user_id = event.sender_id
         if not is_owner_fn(user_id):
-            await event.reply("❌ <b>Access Denied</b>\n\nSirf owner sites add kar sakta hai.", parse_mode='html')
+            await event.reply("❌ <b>Access Denied</b>\n\nOnly the owner can add sites.", parse_mode='html')
             return
 
         if not event.reply_to_msg_id:
@@ -721,7 +721,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
             return
         sites = _get_global_rz_sites()
         if not sites:
-            await event.reply("❌ <b>No sites configured.</b>\n\nOwner ne abhi tak koi site add nahi ki.", parse_mode='html')
+            await event.reply("❌ <b>No sites configured.</b>\n\nNo sites have been added yet. Contact the owner.", parse_mode='html')
             return
 
         lines = '\n'.join(
@@ -744,7 +744,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
     async def rzrem_handler(event):
         user_id = event.sender_id
         if not is_owner_fn(user_id):
-            await event.reply("❌ <b>Access Denied</b>\n\nSirf owner sites remove kar sakta hai.", parse_mode='html')
+            await event.reply("❌ <b>Access Denied</b>\n\nOnly the owner can remove sites.", parse_mode='html')
             return
         parts = event.raw_text.split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip().isdigit():
@@ -767,7 +767,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
 
         sites = _get_effective_sites(user_id)
         if not sites:
-            await event.reply("❌ <b>No site set.</b>\n\nOwner se kehna site add kare.", parse_mode='html')
+            await event.reply("❌ <b>No sites available.</b>\n\nNo sites configured yet. Contact the owner.", parse_mode='html')
             return
 
         parts = event.raw_text.split(maxsplit=1)
@@ -836,7 +836,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
 
         sites = _get_effective_sites(user_id)
         if not sites:
-            await event.reply("❌ <b>No site set.</b>\n\nOwner se kehna site add kare.", parse_mode='html')
+            await event.reply("❌ <b>No sites available.</b>\n\nNo sites configured yet. Contact the owner.", parse_mode='html')
             return
 
         if not event.reply_to_msg_id:
@@ -857,7 +857,7 @@ def register_handlers(bot, is_premium_fn, is_owner_fn, load_proxies_fn):
 
         valid_sites = [s for s in sites if s in _rz_data_cache]
         if not valid_sites:
-            await event.reply("❌ No valid sites. Owner se kehna site add/refresh kare.", parse_mode='html')
+            await event.reply("❌ No valid sites available. Contact the owner to reconfigure.", parse_mode='html')
             return
 
         wait_msg = await event.reply("⏳ Reading file...", parse_mode='html')
