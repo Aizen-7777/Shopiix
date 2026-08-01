@@ -1107,8 +1107,6 @@ def premium_emoji(text):
 
 API_ID    = int(os.environ.get('TG_API_ID',  '32253547'))
 API_HASH  = os.environ.get('TG_API_HASH',    '868242502bea6a1e41b2ce46001d0580')
-API_ID2   = int(os.environ.get('TG_API_ID2', os.environ.get('TG_API_ID',  '32253547')))
-API_HASH2 = os.environ.get('TG_API_HASH2',   os.environ.get('TG_API_HASH', '868242502bea6a1e41b2ce46001d0580'))
 BOT_TOKEN = os.environ.get('TG_BOT_TOKEN',   '8692888647:AAEkzd5UpJLhAWSrO0BIS5B1cH6CQWmMyPU')
 OWNER_ID  = int(os.environ.get('TG_OWNER_ID', '5895386985'))
 
@@ -1139,19 +1137,7 @@ def _gen_key():
     parts = [''.join(random.choices(chars, k=4)) for _ in range(3)]
     return 'SHOP-' + '-'.join(parts)
 
-bot       = TelegramClient('shopiix_bot',    API_ID,  API_HASH).start(bot_token=BOT_TOKEN)
-_bot2     = TelegramClient('shopiix_bot_s2', API_ID2, API_HASH2).start(bot_token=BOT_TOKEN)
-_bots     = [bot, _bot2]
-_bot_ridx = 0
-
-async def _send_msg(chat_id, text, **kwargs):
-    global _bot_ridx
-    client = _bots[_bot_ridx % len(_bots)]
-    _bot_ridx += 1
-    try:
-        return await client.send_message(chat_id, text, **kwargs)
-    except Exception:
-        return await bot.send_message(chat_id, text, **kwargs)
+bot = TelegramClient('shopiix_bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
 active_sessions = {}
 pending_chk_sessions = {}  # user_id -> {cards, file_reply_id, status_msg_id, price_filter, selected}
