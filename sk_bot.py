@@ -13,8 +13,13 @@ import asyncio, aiohttp, json, os, re, tempfile
 from telethon import TelegramClient, events
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-API_ID    = int(os.environ.get('TG_API_ID',   '32253547'))
-API_HASH  = os.environ.get('TG_API_HASH',     '868242502bea6a1e41b2ce46001d0580')
+# Primary API
+API_ID    = int(os.environ.get('TG_API_ID',    '32253547'))
+API_HASH  = os.environ.get('TG_API_HASH',      '868242502bea6a1e41b2ce46001d0580')
+# Secondary API (add your 2nd api_id/api_hash here for faster sending)
+API_ID2   = int(os.environ.get('TG_API_ID2',   os.environ.get('TG_API_ID',   '32253547')))
+API_HASH2 = os.environ.get('TG_API_HASH2',     os.environ.get('TG_API_HASH',  '868242502bea6a1e41b2ce46001d0580'))
+
 BOT_TOKEN = os.environ.get('SK_BOT_TOKEN',    '8748861237:AAHmW5CGflPCj1NCJQkN3W4gEIVS4yGDvgU')
 OWNER_ID  = int(os.environ.get('TG_OWNER_ID', '5895386985'))
 CURRENCY  = "usd"
@@ -25,7 +30,8 @@ _SK        = ""     # set via /setsk at runtime
 _PROXY     = ""     # set via /setproxy at runtime (e.g. http://user:pass@host:port)
 _txt_running: set = set()   # user IDs with active /chktxt scan
 MAX_CARDS  = 50000
-_SEM       = asyncio.Semaphore(5)   # max 5 concurrent checks
+_SEM       = asyncio.Semaphore(10)  # increased with dual API
+_send_idx  = 0     # round-robin index for sender clients
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
@@ -111,9 +117,26 @@ async def check_card_api(card_str: str):
     return classify(pi_resp)
 
 
-# ── BOT HANDLERS ─────────────────────────────────────────────────────────────
+# ── BOT CLIENTS ──────────────────────────────────────────────────────────────
 
-bot = TelegramClient('sk_checker_bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+bot      = TelegramClient('sk_checker_bot',    API_ID,  API_HASH).start(bot_token=BOT_TOKEN)
+_sender2 = TelegramClient('sk_checker_bot_s2', API_ID2, API_HASH2).start(bot_token=BOT_TOKEN)
+_senders = [bot, _sender2]
+
+
+async def _send(chat_id, text):
+    """Round-robin send across both clients to avoid flood waits."""
+    global _send_idx
+    client = _senders[_send_idx % len(_senders)]
+    _send_idx += 1
+    try:
+        await client.send_message(chat_id, text, parse_mode='md')
+    except Exception:
+        # fallback to primary
+        await bot.send_message(chat_id, text, parse_mode='md')
+
+
+# ── BOT HANDLERS ─────────────────────────────────────────────────────────────
 
 
 @bot.on(events.NewMessage(pattern=r'^/start'))
@@ -342,7 +365,7 @@ async def on_chktxt(e):
         if "CHARGED" in status:
             charged_count += 1
             hits.append(f"[CHARGED] {card} | {detail}")
-            await bot.send_message(
+            await _send(
                 e.chat_id,
                 f"💳 **CHARGED ✅**\n"
                 f"Card   : `{card}`\n"
@@ -352,7 +375,7 @@ async def on_chktxt(e):
         elif "LIVE" in status:
             live_count += 1
             hits.append(f"[LIVE] {card} | {detail}")
-            await bot.send_message(
+            await _send(
                 e.chat_id,
                 f"💳 **LIVE ✅**\n"
                 f"Card   : `{card}`\n"
