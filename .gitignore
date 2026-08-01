@@ -1,0 +1,8 @@
+.env
+*.session
+*.session-journal
+__pycache__/
+*.pyc
+shopiix_*.txt
+proxy_backup_*.txt
+proxies_*.txt
